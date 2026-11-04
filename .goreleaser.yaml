@@ -50,9 +50,11 @@ builds:
 universal_binaries:
   - id: git-janitor
     ids: [git-janitor]
+    name_template: git-janitor
     replace: true
   - id: gj
     ids: [gj]
+    name_template: gj
     replace: true
 
 archives:
