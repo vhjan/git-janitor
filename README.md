@@ -61,20 +61,20 @@ Here is why it is a better approach:
 **macOS / Linux (Homebrew)**
 
 ```bash
-brew install jvherck/tap/git-janitor
+brew install vhjan/tap/git-janitor
 ```
 
 **Windows (Scoop)**
 
 ```bash
-scoop bucket add jvherck https://github.com/jvherck/scoop-bucket.git
+scoop bucket add vhjan https://github.com/vhjan/scoop-bucket.git
 scoop install git-janitor
 ```
 
 **Option 2: Download Pre-compiled Binaries**
 
 You can download the pre-compiled `.zip` or `.tar.gz` binaries for Windows, macOS, and Linux directly from
-the [GitHub Releases page](https://www.google.com/search?q=https://github.com/jvherck/git-janitor/releases). Extract the
+the [GitHub Releases page](https://github.com/vhjan/git-janitor/releases). Extract the
 executable and move it to a directory in your system's `$PATH`.
 
 **Option 3: Install via Go**
@@ -82,7 +82,7 @@ executable and move it to a directory in your system's `$PATH`.
 If you have [Go](https://go.dev/) 1.24.2 or later installed:
 
 ```bash
-go install github.com/jvherck/git-janitor@latest
+go install github.com/vhjan/git-janitor@latest
 ```
 
 *(Ensure your `~/go/bin` directory is in your system's `$PATH`)*
@@ -90,7 +90,7 @@ go install github.com/jvherck/git-janitor@latest
 **Option 4: Build from source**
 
 ```bash
-git clone https://github.com/jvherck/git-janitor.git
+git clone https://github.com/vhjan/git-janitor.git
 cd git-janitor
 go build -o git-janitor .
 # Move the binary to your PATH, e.g., sudo mv git-janitor /usr/local/bin/
@@ -108,28 +108,59 @@ git-janitor
 
 > If you're on Windows and you haven't added the git-janitor executable to your PATH use `.\git-janitor.exe`.
 
+### Shorter ways to run it
+
+Typing `git-janitor` gets old quickly, so the same program is available under shorter names:
+
+| Command         | Notes                                                                                   |
+|-----------------|-----------------------------------------------------------------------------------------|
+| `gj`            | Short alias, installed next to `git-janitor` by Scoop, Homebrew and the release archives |
+| `git janitor`   | Works automatically: Git runs any `git-<name>` executable on your PATH as `git <name>`  |
+
+Neither overrides an existing Git command. If you installed with `go install` (which only produces `git-janitor`), you
+can still get the short forms yourself:
+
+```bash
+# bash / zsh
+alias gj=git-janitor
+# or as a git alias, so that `git j` works
+git config --global alias.j janitor
+```
+
+```powershell
+# PowerShell profile
+Set-Alias gj git-janitor
+```
+
 ### Keybindings
 
-| Key            | Action                                  |
-|----------------|-----------------------------------------|
-| `↑` / `k`      | Move cursor up                          |
-| `↓` / `j`      | Move cursor down                        |
-| `Space`        | Toggle selection for the current branch |
-| `a`            | Select **all** unprotected branches     |
-| `m`            | Select only **merged** branches         |
-| `c`            | **Clear** all selections                |
-| `Enter`        | Proceed to deletion confirmation        |
-| `q` / `Ctrl+C` | Quit                                    |
+| Key            | Action                                                       |
+|----------------|--------------------------------------------------------------|
+| `↑` / `k`      | Move cursor up                                               |
+| `↓` / `j`      | Move cursor down                                             |
+| `Space`        | Toggle selection for the current branch                      |
+| `a`            | Select **all** unprotected branches                          |
+| `m`            | Select only **merged** branches                              |
+| `g`            | Select only **gone** branches (upstream deleted on remote)   |
+| `s`            | Select only **stale** branches (see `--stale-days`)          |
+| `c`            | **Clear** all selections                                     |
+| `o`            | Cycle the sort order                                         |
+| `Enter`        | Proceed to deletion confirmation                             |
+| `q` / `Ctrl+C` | Quit                                                         |
 
 ## Configuration
 
-The UI is built using `bubbletea` and `lipgloss`. Colors, margins, and standard protected branch names are centralized
-in the `constants.go` file. You can modify these constants and rebuild the binary to adjust the UI to your preferences.
+The UI is built using `bubbletea` and `lipgloss`. Colors, margins and list symbols are centralized in
+`internal/theme/theme.go`, and the built-in protected branch names live in `internal/branches/branches.go`. You can
+modify these and rebuild the binary to adjust the tool to your preferences. Run `git-janitor --help` for the available
+flags.
 
 ## Contributing
 
 Contributions, issues, and feature requests are welcome. Feel free to check
-the [issues page](https://github.com/jvherck/git-janitor/issues) if you want to contribute.
+the [issues page](https://github.com/vhjan/git-janitor/issues) if you want to contribute.
+
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for how the code is organised and where new features belong.
 
 1. Fork the Project
 2. Create your Feature Branch (`git checkout -b feature/NewFeature`)
@@ -145,5 +176,5 @@ workflows, I want to acknowledge their original work!
 
 ## License
 
-Distributed under the MIT License. See [`LICENSE`](https://github.com/jvherck/git-janitor/blob/main/LICENSE) for more
+Distributed under the MIT License. See [`LICENSE`](https://github.com/vhjan/git-janitor/blob/main/LICENSE) for more
 information.
