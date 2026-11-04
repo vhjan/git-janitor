@@ -37,19 +37,19 @@ jobs:
           TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
           VERSION: ${{ github.ref_name }}
         run: |
-          URL="https://github.com/jvherck/git-janitor/archive/refs/tags/${VERSION}.tar.gz"
+          URL="https://github.com/vhjan/git-janitor/archive/refs/tags/${VERSION}.tar.gz"
           curl -sL $URL -o source.tar.gz
           SHA256=$(sha256sum source.tar.gz | awk '{print $1}')
           DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
           COMMIT=$(git rev-parse --short HEAD)
           
-          git clone https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/jvherck/homebrew-tap.git tap-repo
+          git clone https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/vhjan/homebrew-tap.git tap-repo
           mkdir -p tap-repo/Formula
           
           cat <<EOF > tap-repo/Formula/git-janitor.rb
           class GitJanitor < Formula
             desc "A fast, interactive TUI for cleaning up local Git branches."
-            homepage "https://github.com/jvherck/git-janitor"
+            homepage "https://github.com/vhjan/git-janitor"
             url "$URL"
             sha256 "$SHA256"
             license "MIT"
@@ -57,7 +57,10 @@ jobs:
             depends_on "go" => :build
           
             def install
-              system "go", "build", "-ldflags", "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}", "-o", bin/"git-janitor", "."
+              pkg = "github.com/vhjan/git-janitor/internal/buildinfo"
+              system "go", "build", "-ldflags", "-s -w -X #{pkg}.Version=${VERSION} -X #{pkg}.Commit=${COMMIT} -X #{pkg}.Date=${DATE}", "-o", bin/"git-janitor", "."
+              # Short alias; the binary detects it was started as "gj" from argv[0].
+              bin.install_symlink bin/"git-janitor" => "gj"
             end
           end
           EOF

@@ -1,0 +1,105 @@
+/*
+MIT License
+
+Copyright (c) 2026 Jan Van Herck (https://github.com/vhjan)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
+/*
+Package git is a thin wrapper around the git executable. It is the only package in the project that spawns git
+processes, so every future feature (merge, rebase, push, ...) goes through the single run helper below. That gives
+us one place to add logging, dry-run handling, timeouts or multi-remote support.
+*/
+package git
+
+import (
+	"bytes"
+	"errors"
+	"os/exec"
+	"strings"
+)
+
+// ErrNotRepo is returned by Open when the directory is not inside a Git work tree.
+var ErrNotRepo = errors.New("not inside a git repository")
+
+// Error is returned when a git command exits unsuccessfully. It keeps the captured stderr so callers can surface
+// the real reason to the user.
+type Error struct {
+	Args   []string
+	Stderr string
+	Err    error
+}
+
+func (e *Error) Error() string {
+	msg := "git " + strings.Join(e.Args, " ") + ": " + e.Err.Error()
+	if e.Stderr != "" {
+		msg += ": " + e.Stderr
+	}
+	return msg
+}
+
+func (e *Error) Unwrap() error { return e.Err }
+
+// Repo represents a Git repository on disk. The zero value operates on the current working directory.
+type Repo struct {
+	// Dir is the working directory for all git commands. Empty means the process' current directory.
+	Dir string
+
+	// Observer, when set, is called after every git invocation. It is the hook for a future operation-log panel.
+	Observer func(args []string, err error)
+}
+
+// Open verifies that dir (or the current directory when empty) is inside a work tree and returns a Repo for it.
+func Open(dir string) (*Repo, error) {
+	r := &Repo{Dir: dir}
+	if _, err := r.run("rev-parse", "--is-inside-work-tree"); err != nil {
+		return nil, ErrNotRepo
+	}
+	return r, nil
+}
+
+// run executes `git <args...>` and returns its stdout. On failure the returned error is an *Error.
+func (r *Repo) run(args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = r.Dir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	out, err := cmd.Output()
+	if err != nil {
+		err = &Error{Args: args, Stderr: strings.TrimSpace(stderr.String()), Err: err}
+	}
+	if r.Observer != nil {
+		r.Observer(args, err)
+	}
+	return string(out), err
+}
+
+// splitLines splits command output into trimmed, non-empty lines (tolerating Windows line endings).
+func splitLines(s string) []string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	var lines []string
+	for l := range strings.SplitSeq(s, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}

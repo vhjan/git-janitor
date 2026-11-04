@@ -1,6 +1,6 @@
 // MIT License
 //
-// Copyright (c) 2026 Jan Van Herck (https://github.com/jvherck)
+// Copyright (c) 2026 Jan Van Herck (https://github.com/vhjan)
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-module github.com/jvherck/git-janitor
+module github.com/vhjan/git-janitor
 
 go 1.24.2
 

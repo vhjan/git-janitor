@@ -6,8 +6,15 @@ before:
   hooks:
     - go mod tidy
 
+# Two binaries are built from the same source:
+#   - `git-janitor`: the canonical name. Because it starts with "git-", git also runs it as `git janitor`.
+#   - `gj`: a short alias for quick typing.
+# Both are included in the archives, the Scoop manifest and the deb/rpm/apk packages automatically.
 builds:
-  - env:
+  - id: git-janitor
+    main: .
+    binary: git-janitor
+    env:
       - CGO_ENABLED=0
     goos:
       - linux
@@ -16,15 +23,39 @@ builds:
     goarch:
       - amd64
       - arm64
-    binary: git-janitor
     ldflags:
       - -s -w
-      - -X main.version={{.Version}}
-      - -X main.commit={{.Commit}}
-      - -X main.date={{.Date}}
+      - -X github.com/vhjan/git-janitor/internal/buildinfo.Version={{.Version}}
+      - -X github.com/vhjan/git-janitor/internal/buildinfo.Commit={{.Commit}}
+      - -X github.com/vhjan/git-janitor/internal/buildinfo.Date={{.Date}}
+
+  - id: gj
+    main: .
+    binary: gj
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/vhjan/git-janitor/internal/buildinfo.Version={{.Version}}
+      - -X github.com/vhjan/git-janitor/internal/buildinfo.Commit={{.Commit}}
+      - -X github.com/vhjan/git-janitor/internal/buildinfo.Date={{.Date}}
 
 universal_binaries:
-  - replace: true
+  - id: git-janitor
+    ids: [git-janitor]
+    name_template: git-janitor
+    replace: true
+  - id: gj
+    ids: [gj]
+    name_template: gj
+    replace: true
 
 archives:
   - formats: [tar.gz]
@@ -43,8 +74,8 @@ checksum:
   name_template: 'checksums.txt'
 
 nfpms:
-  - vendor: jvherck
-    homepage: "https://github.com/jvherck/git-janitor"
+  - vendor: vhjan
+    homepage: "https://github.com/vhjan/git-janitor"
     maintainer: "Jan Van Herck"
     description: "A fast, interactive TUI for cleaning up local Git branches."
     license: MIT
@@ -57,10 +88,10 @@ nfpms:
 
 scoops:
   - repository:
-      owner: jvherck
+      owner: vhjan
       name: scoop-bucket
       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
-    homepage: "https://github.com/jvherck/git-janitor"
+    homepage: "https://github.com/vhjan/git-janitor"
     description: "A fast, interactive TUI for cleaning up local Git branches."
     license: MIT
 
@@ -74,7 +105,7 @@ changelog:
 
 release:
   github:
-    owner: jvherck
+    owner: vhjan
     name: git-janitor
   footer: |
     ## How to Update
@@ -83,7 +114,7 @@ release:
     
     **macOS / Linux (Homebrew)**
     ```bash
-    brew upgrade jvherck/tap/git-janitor
+    brew upgrade vhjan/tap/git-janitor
     ```
     
     **Windows (Scoop)**
@@ -93,7 +124,7 @@ release:
     
     **Go Users**
     ```bash
-    go install github.com/jvherck/git-janitor@latest
+    go install github.com/vhjan/git-janitor@latest
     ```
     
-    *First time installing? Check out the [full installation guide](https://github.com/jvherck/git-janitor#installation) in the README.*
+    *First time installing? Check out the [full installation guide](https://github.com/vhjan/git-janitor#installation) in the README.*

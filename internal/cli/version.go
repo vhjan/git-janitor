@@ -1,7 +1,7 @@
 /*
 MIT License
 
-Copyright (c) 2026 Jan Van Herck (https://github.com/jvherck)
+Copyright (c) 2026 Jan Van Herck (https://github.com/vhjan)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -23,25 +23,25 @@ SOFTWARE.
 */
 
 /*
-This file contains the functionality for displaying the version information of the Git Janitor application.
+This file implements the `version` command (and the -v/--version flag).
 */
-package main
+
+package cli
 
 import (
 	"fmt"
-	"os"
 
-	"github.com/charmbracelet/lipgloss"
+	"github.com/vhjan/git-janitor/internal/buildinfo"
+	"github.com/vhjan/git-janitor/internal/theme"
 )
 
-// printVersion outputs the application's version, commit hash, and build date,
-// then exits the application successfully.
-func printVersion() {
-	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorTitle)).Bold(true)
-	fmt.Println(titleStyle.Render("🧹  Git Janitor") + fmt.Sprintf(" version %s", version))
-
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ColorTextMuted))
-	fmt.Println(mutedStyle.Render(fmt.Sprintf("  Commit:  %s", commit)))
-	fmt.Println(mutedStyle.Render(fmt.Sprintf("  Built:   %s", date)))
-	os.Exit(0)
+var versionCommand = &Command{
+	Name:    "version",
+	Summary: "Shows the version of Git Janitor",
+	Run: func(ctx *Context, _ []string) int {
+		fmt.Fprintln(ctx.Stdout, theme.Title.Render("🧹  Git Janitor")+fmt.Sprintf(" version %s", buildinfo.Version))
+		fmt.Fprintln(ctx.Stdout, theme.Muted.Render(fmt.Sprintf("  Commit:  %s", buildinfo.Commit)))
+		fmt.Fprintln(ctx.Stdout, theme.Muted.Render(fmt.Sprintf("  Built:   %s", buildinfo.Date)))
+		return 0
+	},
 }
