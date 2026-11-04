@@ -38,7 +38,9 @@ Rules of thumb:
 |-----------------------------------------------------|------------------------------------------------------------------------------------------------|
 | A new git operation (push, checkout, create, ...)   | A method on `git.Repo` (`internal/git`), plus a function in `branches` if it has logic around it |
 | A new branch status tag (e.g. PR state)             | A field on `branches.Branch`, set in `branches.Load`; show it in `tui/item.go`                  |
-| A new key in the list                               | A binding in `tui/keys.go`, a case in `handleListKey` (`tui/view_list.go`). Footer and `--help` update automatically |
+| A new key                                           | A binding in `tui/keys.go` (global or in a tab group + `tabBindings`), a case in `handleListKey` / `handleCleanupKey` / `handleBranchesKey`. Footer, help overlay and `--help` update automatically |
+| A new action on a branch                            | A `menuItem` in `openMenu` (`tui/view_menu.go`); it gets a menu entry, a letter shortcut and disabled-with-reason handling for free |
+| A new tab (remotes, stashes, tags)                  | A `viewTab` constant + name in `model.go`, its key group in `keys.go`, a case in `handleListKey` and `footer` |
 | A new screen (prompt, details pane, command palette)| A `state` constant and `view_<name>.go` in `internal/tui`; add cases to `Update`/`View` in `model.go` |
 | A new CLI subcommand (`new`, `co`, `clean`)         | A `Command` in `internal/cli`, registered in `init()` in `cli.go`. It shows up in `--help` automatically |
 | A new global flag                                   | `internal/cli/flags.go` (+ a field in `config.Config` if the TUI needs it). Help is generated   |
@@ -48,11 +50,17 @@ Rules of thumb:
 ## The TUI in a nutshell
 
 `tui.Model` holds shared state and a `state` enum: `stateLoading` (spinner, text in `Model.busy`), `stateList`,
-`stateConfirm` (delete dialog), `stateOp` (merge/rebase/update dialog) and `stateMessage` (notice or error). `Update`
-first handles messages that don't depend on the view (window size, branches loaded, delete/operation finished) and then
-forwards everything else to `updateLoading` / `updateList` / `updateConfirm` / `updateOp` / `updateMessage`. `View` does
-the same for rendering. Slow work is always a `tea.Cmd` in `tui/messages.go` that returns a message; call
+`stateConfirm` (delete dialog), `stateOp` (merge/rebase/update dialog), `stateMenu` (action menu), `stateHelp` (help
+overlay) and `stateMessage` (notice or error). `Update` first handles messages that don't depend on the view (window
+size, branches loaded, delete/operation finished) and then forwards everything else to `update<State>`. `View` does the
+same for rendering. Slow work is always a `tea.Cmd` in `tui/messages.go` that returns a message; call
 `Model.startBusy` (in its own statement, it mutates the model) to show the spinner while it runs.
+
+`stateList` itself has **tabs** (`viewTab`): *Cleanup* (checkboxes, selection keys, delete) and *Branches* (plain rows,
+`Enter` opens the action menu). Both show the same items; `item.plain` switches the rendering and `Model.setTab`
+re-renders them. Keys are grouped in `keys.go` as global bindings plus one group per tab, `handleListKey` dispatches
+accordingly, and the footer, the help overlay (`?`) and `--help` are all generated from the same bindings
+(`HelpSections`).
 
 ## Safety model
 

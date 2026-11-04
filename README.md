@@ -149,30 +149,59 @@ git config --global alias.j janitor
 Set-Alias gj git-janitor
 ```
 
-### Keybindings
+### Views and keybindings
+
+The main screen has two views, shown as tabs at the top. Switch with `Tab`, or jump with `1` / `2`. Keys belong to
+the active view only (for example `m` selects merged branches in Cleanup but starts a merge in Branches), so something
+done in one view can never alter the other. Press `?` at any time for a scrollable help overlay listing every key.
+
+| View | For | Rows |
+|------|-----|------|
+| **1 Cleanup** (default) | Selecting branches and deleting them | Checkbox, status tags, unpushed-commit warnings |
+| **2 Branches** | Acting on one branch at a time | Current-branch marker, ahead/behind, last commit subject |
+
+**Everywhere in the lists**
 
 | Key            | Action                                                       |
 |----------------|--------------------------------------------------------------|
 | `↑` / `k`      | Move cursor up                                               |
 | `↓` / `j`      | Move cursor down                                             |
+| `/`            | Filter branches by name                                      |
+| `Tab` / `Shift+Tab` / `1` / `2` | Switch view                                 |
+| `f`            | **Fetch** and prune stale remote-tracking branches           |
+| `o`            | Cycle the sort order                                         |
+| `?`            | Help overlay                                                 |
+| `q` / `Ctrl+C` | Quit                                                         |
+
+**Cleanup view**
+
+| Key            | Action                                                       |
+|----------------|--------------------------------------------------------------|
 | `Space`        | Toggle selection for the current branch                      |
 | `a`            | Select **all** unprotected branches                          |
 | `m`            | Select only **merged** branches (incl. squash/rebase merges) |
 | `g`            | Select only **gone** branches (upstream deleted on remote)   |
 | `s`            | Select only **stale** branches (see `--stale-days`)          |
 | `c`            | **Clear** all selections                                     |
-| `o`            | Cycle the sort order                                         |
-| `f`            | **Fetch** and prune stale remote-tracking branches           |
-| `M`            | **Merge** the highlighted branch into the current branch     |
-| `R`            | **Rebase** the current branch onto the highlighted branch    |
-| `U`            | **Update** the current branch from the default branch        |
-| `Enter`        | Proceed to deletion confirmation                             |
-| `q` / `Ctrl+C` | Quit                                                         |
+| `Enter`        | Delete the selected branches (asks first)                    |
+
+**Branches view**
+
+| Key            | Action                                                       |
+|----------------|--------------------------------------------------------------|
+| `Enter`        | Open the **action menu** for the highlighted branch          |
+| `m`            | **Merge** the highlighted branch into the current branch     |
+| `r`            | **Rebase** the current branch onto the highlighted branch    |
+| `u`            | **Update** the current branch from the default branch        |
+
+The action menu spells out what each entry will do ("Merge feature into main"), greys out entries that don't apply
+with the reason, and each entry has a letter (`m`, `r`, `u`, `d` for delete) that triggers it directly. The cursor
+skips entries that are unavailable and stays put when no other entry can be chosen.
 
 In the **delete confirmation**, `r` toggles *also delete the remote branches*, `y` confirms (a capital `Y` when commits
-would be lost) and `n` / `Esc` cancels. In the **merge / rebase dialog**, `↑`/`↓` or `1`-`4` pick an option, `Enter`
-runs it and `Esc` cancels. Merge, rebase and update act on the branch you are currently on and need a clean working
-tree (untracked files are fine). With `--dry-run` they only show the git command they would run.
+would be lost) and `n` / `Esc` cancels. In menus and the **merge / rebase dialog**, `↑`/`↓` or `1`-`4` pick an option,
+`Enter` runs it and `Esc` cancels. Merge, rebase and update act on the branch you are currently on and need a clean
+working tree (untracked files are fine). With `--dry-run` they only show the git command they would run.
 
 ## Configuration
 
