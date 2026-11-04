@@ -47,6 +47,8 @@ const maxParallel = 8
 // Branch is a local branch together with the status flags the tool cares about.
 type Branch struct {
 	Name            string
+	Current         bool   // The checked-out branch
+	Subject         string // First line of the last commit message
 	Protected       bool   // Cannot be deleted (current, default, built-in, user-protected or checked out elsewhere)
 	ProtectedReason string // Why it is protected, empty when it is not
 	Merged          bool   // Git considers it merged into the default branch
@@ -125,6 +127,8 @@ func Load(repo *git.Repo, opts Options) (Snapshot, error) {
 
 		result[i] = Branch{
 			Name:            b.Name,
+			Current:         b.Name == snap.Current,
+			Subject:         b.Subject,
 			Merged:          isMerged,
 			Gone:            b.UpstreamGone(),
 			Stale:           IsStale(b.CommitUnix, now, opts.StaleDays),

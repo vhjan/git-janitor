@@ -50,6 +50,7 @@ type Branch struct {
 	CommitRelative string // Human-readable age of the last commit (e.g. "2 weeks ago")
 	CommitUnix     int64  // Unix timestamp of the last commit
 	WorktreePath   string // Path of the worktree this branch is checked out in, "" if none
+	Subject        string // First line of the last commit message
 }
 
 // UpstreamGone reports whether the branch tracks a remote branch that no longer exists.
@@ -244,8 +245,9 @@ const (
 		"%(upstream:remoteref)" + branchSeparator +
 		"%(committerdate:relative)" + branchSeparator +
 		"%(committerdate:unix)" + branchSeparator +
-		"%(worktreepath)"
-	branchFieldCount = 7
+		"%(worktreepath)" + branchSeparator +
+		"%(contents:subject)"
+	branchFieldCount = 8
 )
 
 // LocalBranches lists all local branches (refs/heads).
@@ -266,7 +268,7 @@ func (r *Repo) LocalBranches() ([]Branch, error) {
 
 // parseBranchLine parses one line produced with branchFormat.
 func parseBranchLine(line string) (Branch, bool) {
-	parts := strings.Split(line, branchSeparator)
+	parts := strings.SplitN(line, branchSeparator, branchFieldCount) // subject is last: keep any separator inside it
 	if len(parts) != branchFieldCount {
 		return Branch{}, false
 	}
@@ -283,6 +285,7 @@ func parseBranchLine(line string) (Branch, bool) {
 		RemoteRef:      strings.TrimSpace(parts[3]),
 		CommitRelative: parts[4],
 		WorktreePath:   strings.TrimSpace(parts[6]),
+		Subject:        strings.TrimSpace(parts[7]),
 	}
 	if u, err := strconv.ParseInt(strings.TrimSpace(parts[5]), 10, 64); err == nil {
 		b.CommitUnix = u

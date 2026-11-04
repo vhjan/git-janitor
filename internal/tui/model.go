@@ -28,10 +28,15 @@ Package tui is the interactive Bubble Tea front end.
 This file contains the root model. It owns the shared state and routes every message to the view that belongs to
 the current state.
 
+The main screen has tabs (viewTab) that show the same branches with a different purpose: Cleanup (select and
+delete) and Branches (act on one branch through a menu). Dialogs, menus and the help overlay are states of their own.
+
 Adding a new view:
  1. add a constant to the state enum below,
  2. create view_<name>.go with `update<Name>(msg)` and `view<Name>()` methods on Model,
  3. add a case for it in Update and View.
+
+Adding a new tab: add a viewTab constant and its name, its key group in keys.go, and a case in handleListKey.
 */
 package tui
 
@@ -41,6 +46,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -55,11 +61,29 @@ type state int
 
 const (
 	stateLoading state = iota // Spinner while background work runs (see Model.busy)
-	stateList                 // Primary view: selecting branches
-	stateConfirm              // Confirmation dialog before deleting the selected branches
+	stateList                 // Primary view: the branch list (see viewTab)
+	stateConfirm              // Confirmation dialog before deleting branches
 	stateOp                   // Merge / rebase / update dialog
+	stateMenu                 // Action menu for one branch
+	stateHelp                 // Scrollable help overlay
 	stateMessage              // Informational or error message; any key returns to the list
 )
+
+// viewTab selects what the list view shows and which keys are active.
+type viewTab int
+
+const (
+	tabCleanup  viewTab = iota // Select branches and delete them
+	tabBranches                // Overview of all branches; act on one at a time
+	tabCount                   // Number of tabs; keep last
+)
+
+func (t viewTab) String() string {
+	if t == tabBranches {
+		return "Branches"
+	}
+	return "Cleanup"
+}
 
 // docStyle defines the layout margins of the main window.
 var docStyle = lipgloss.NewStyle().Margin(theme.DocMarginVertical, theme.DocMarginHorizontal)
@@ -83,8 +107,10 @@ type Model struct {
 
 	list    list.Model
 	spinner spinner.Model
+	help    viewport.Model // Scrollable content of the help overlay
 
 	state         state
+	tab           viewTab
 	width, height int
 	sort          sortMode
 
@@ -97,8 +123,10 @@ type Model struct {
 	defaultBehind   int    // Commits the local default branch is behind that upstream
 
 	deleteRemote bool      // Confirm dialog: also delete remote branches
+	deleteOnly   *item     // Confirm dialog: delete just this branch instead of the selection (from the menu)
 	op           *opDialog // Merge/rebase dialog state while in stateOp
 	opSeq        int       // Counter giving every opened dialog a unique id
+	menu         *menuState
 
 	message    string // Text of the message view
 	messageErr bool   // Whether the message view reports an error
@@ -151,6 +179,7 @@ func newList(cfg config.Config) list.Model {
 	if cfg.DryRun {
 		l.Title += " (DRY RUN)"
 	}
+	l.SetShowHelp(false) // our own footer and help overlay replace the list's built-in help
 	l.StatusMessageLifetime = statusLifetime
 	l.Styles.Title = lipgloss.NewStyle().
 		Background(lipgloss.Color(theme.ColorPrimary)).
@@ -185,6 +214,19 @@ func (m *Model) showMessage(text string, isErr bool) {
 	m.messageErr = isErr
 }
 
+// setTab switches the list view to tab t, re-rendering every row for it.
+func (m *Model) setTab(t viewTab) tea.Cmd {
+	m.tab = t
+	items := m.list.Items()
+	for idx, li := range items {
+		if it, ok := li.(item); ok {
+			it.plain = t == tabBranches
+			items[idx] = it
+		}
+	}
+	return m.list.SetItems(items)
+}
+
 // Update is the central event loop. Messages that are independent of the active view are handled first; everything
 // else is routed to the current view.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -192,6 +234,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.resizeList()
+		m.resizeHelp()
 
 	case branchesLoadedMsg:
 		return m.onBranchesLoaded(msg)
@@ -235,13 +278,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateConfirm(msg)
 	case stateOp:
 		return m.updateOp(msg)
+	case stateMenu:
+		return m.updateMenu(msg)
+	case stateHelp:
+		return m.updateHelp(msg)
 	case stateMessage:
 		return m.updateMessage(msg)
 	}
 	return m, nil
 }
 
-// onBranchesLoaded installs freshly loaded branches, keeping the user's selection and sort order across reloads.
+// onBranchesLoaded installs freshly loaded branches, keeping the user's selection, tab and sort order across reloads.
 func (m Model) onBranchesLoaded(msg branchesLoadedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		m.result.Errors = append(m.result.Errors, fmt.Sprintf("Error fetching branches: %v", msg.err))
@@ -255,10 +302,12 @@ func (m Model) onBranchesLoaded(msg branchesLoadedMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	for idx, li := range msg.items {
-		if it := li.(item); previouslySelected[it.Name] && !it.Protected {
+		it := li.(item)
+		it.plain = m.tab == tabBranches
+		if previouslySelected[it.Name] && !it.Protected {
 			it.selected = true
-			msg.items[idx] = it
 		}
+		msg.items[idx] = it
 	}
 	sortItems(msg.items, m.sort)
 
@@ -287,6 +336,10 @@ func (m Model) View() string {
 		return m.viewConfirm()
 	case stateOp:
 		return m.viewOp()
+	case stateMenu:
+		return m.viewMenu()
+	case stateHelp:
+		return m.viewHelp()
 	case stateMessage:
 		return m.viewMessage()
 	default:

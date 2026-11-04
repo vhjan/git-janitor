@@ -61,6 +61,9 @@ type deletePlan struct {
 
 func (m Model) plan() deletePlan {
 	p := deletePlan{items: m.selectedItems()}
+	if m.deleteOnly != nil { // opened from the action menu: just this branch
+		p.items = []item{*m.deleteOnly}
+	}
 	for _, i := range p.items {
 		switch {
 		case i.Merged:
@@ -102,6 +105,7 @@ func (m Model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(k, m.keys.No):
 		m.state = stateList
+		m.deleteOnly = nil
 		return m, nil
 
 	case key.Matches(k, m.keys.Yes):

@@ -74,7 +74,14 @@ func renderHelp(program string) string {
 	}
 	section("COMMANDS:", cmdRows)
 	section("FLAGS:", newRootFlags().helpRows())
-	section("INTERACTIVE KEYBINDINGS:", tui.HelpRows())
+	sb.WriteString("\n" + headingStyle.Render("INTERACTIVE KEYBINDINGS:") + "\n")
+	sb.WriteString(theme.Muted.Render("  Press ? inside the app for the same list.") + "\n")
+	for _, group := range tui.HelpSections() {
+		sb.WriteString("\n  " + theme.Title.Render(group.Title) + "\n")
+		for _, row := range group.Rows {
+			sb.WriteString(fmt.Sprintf("    %s %s\n", keyColumn.Render(row[0]), row[1]))
+		}
+	}
 
 	sb.WriteString("\n" + headingStyle.Render("EXAMPLES:") + "\n")
 	sb.WriteString(fmt.Sprintf("  %s update\n", program))

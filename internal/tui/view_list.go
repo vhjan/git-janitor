@@ -23,14 +23,16 @@ SOFTWARE.
 */
 
 /*
-This file implements the main view: the filterable branch list with selection, bulk-select shortcuts, sorting and
-the entry points to fetching, merging, rebasing and deleting.
+This file implements the main view: the tab bar, the filterable branch list, and the key handling of the Cleanup
+and Branches tabs (selection, bulk-select shortcuts, sorting, fetching, and the entry points to merging, rebasing,
+the action menu and deleting).
 */
 
 package tui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
@@ -41,6 +43,9 @@ import (
 )
 
 var footerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.ColorTextMuted))
+
+// tabBarLines is the height of the tab bar above the list.
+const tabBarLines = 1
 
 func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Only intercept our own keys when the user is not typing into the filter input.
@@ -56,12 +61,53 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// handleListKey processes the keys specific to branch operations. The bool reports whether the key was consumed.
+// handleListKey processes our keys: first those that work in every tab, then those of the active tab. The bool
+// reports whether the key was consumed.
 func (m Model) handleListKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 	switch {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit, true
 
+	case key.Matches(msg, m.keys.Help):
+		m.openHelp()
+		return m, nil, true
+
+	case key.Matches(msg, m.keys.NextTab):
+		cmd := m.setTab((m.tab + 1) % tabCount)
+		return m, cmd, true
+
+	case key.Matches(msg, m.keys.PrevTab):
+		cmd := m.setTab((m.tab + tabCount - 1) % tabCount)
+		return m, cmd, true
+
+	case key.Matches(msg, m.keys.TabClean):
+		cmd := m.setTab(tabCleanup)
+		return m, cmd, true
+
+	case key.Matches(msg, m.keys.TabBranch):
+		cmd := m.setTab(tabBranches)
+		return m, cmd, true
+
+	case key.Matches(msg, m.keys.CycleSort):
+		m.sort = m.sort.next()
+		items := m.list.Items()
+		sortItems(items, m.sort)
+		return m, m.list.SetItems(items), true
+
+	case key.Matches(msg, m.keys.Fetch):
+		busy := m.startBusy("Fetching and pruning remotes...")
+		return m, tea.Batch(busy, loadBranchesCmd(m.repo, m.cfg, loadOptions{fetch: true, announce: true})), true
+	}
+
+	if m.tab == tabBranches {
+		return m.handleBranchesKey(msg)
+	}
+	return m.handleCleanupKey(msg)
+}
+
+// handleCleanupKey handles the keys of the Cleanup tab: selecting and deleting.
+func (m Model) handleCleanupKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
+	switch {
 	case key.Matches(msg, m.keys.Toggle):
 		if i, ok := m.list.SelectedItem().(item); ok && !i.Protected {
 			i.selected = !i.selected
@@ -85,15 +131,23 @@ func (m Model) handleListKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 	case key.Matches(msg, m.keys.ClearSelection):
 		return m, m.updateVisible(func(i *item) { i.selected = false }), true
 
-	case key.Matches(msg, m.keys.CycleSort):
-		m.sort = m.sort.next()
-		items := m.list.Items()
-		sortItems(items, m.sort)
-		return m, m.list.SetItems(items), true
+	case key.Matches(msg, m.keys.Proceed):
+		if len(m.selectedItems()) > 0 {
+			m.state = stateConfirm
+			m.deleteRemote = false
+			m.deleteOnly = nil
+		}
+		return m, nil, true
+	}
+	return m, nil, false
+}
 
-	case key.Matches(msg, m.keys.Fetch):
-		busy := m.startBusy("Fetching and pruning remotes...")
-		return m, tea.Batch(busy, loadBranchesCmd(m.repo, m.cfg, loadOptions{fetch: true, announce: true})), true
+// handleBranchesKey handles the keys of the Branches tab: acting on the highlighted branch.
+func (m Model) handleBranchesKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
+	switch {
+	case key.Matches(msg, m.keys.Actions):
+		m.openMenu()
+		return m, nil, true
 
 	case key.Matches(msg, m.keys.Merge):
 		next, cmd := m.beginOp(opMerge)
@@ -106,15 +160,7 @@ func (m Model) handleListKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 	case key.Matches(msg, m.keys.Update):
 		next, cmd := m.beginOp(opUpdate)
 		return next, cmd, true
-
-	case key.Matches(msg, m.keys.Proceed):
-		if len(m.selectedItems()) > 0 {
-			m.state = stateConfirm
-			m.deleteRemote = false
-		}
-		return m, nil, true
 	}
-
 	return m, nil, false
 }
 
@@ -169,6 +215,26 @@ func (m Model) selectedNames() []string {
 	return names
 }
 
+// tabBar renders the row of tabs with the active one highlighted.
+func (m Model) tabBar() string {
+	active := lipgloss.NewStyle().
+		Background(lipgloss.Color(theme.ColorSecondary)).
+		Foreground(lipgloss.Color(theme.ColorOnPrimary)).
+		Bold(true)
+	inactive := lipgloss.NewStyle().Foreground(lipgloss.Color(theme.ColorTextMuted))
+
+	var tabs []string
+	for t := viewTab(0); t < tabCount; t++ {
+		label := fmt.Sprintf(" %d %s ", int(t)+1, t)
+		if t == m.tab {
+			tabs = append(tabs, active.Render(label))
+		} else {
+			tabs = append(tabs, inactive.Render(label))
+		}
+	}
+	return strings.Join(tabs, " ")
+}
+
 // staleDefaultNotice warns when the local default branch lacks commits that its remote has. The "merged" checks
 // compare against the local default branch (deliberately: users may not want to update it yet), so merges that
 // happened on the remote, such as squash-merged pull requests, would not show up. Returns "" when in sync.
@@ -192,10 +258,10 @@ func (m Model) renderNotice() string {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(theme.ColorWarning)).PaddingLeft(2).Width(width).Render(text)
 }
 
-// resizeList gives the list the space left after the margins, the footer and the optional notice.
+// resizeList gives the list the space left after the margins, tab bar, footer and optional notice.
 func (m *Model) resizeList() {
 	h, v := docStyle.GetFrameSize()
-	reserved := v + footerLines + 1
+	reserved := v + tabBarLines + footerLines + 1
 	if notice := m.renderNotice(); notice != "" {
 		reserved += lipgloss.Height(notice)
 	}
@@ -203,9 +269,9 @@ func (m *Model) resizeList() {
 }
 
 func (m Model) viewList() string {
-	body := m.list.View()
+	body := m.tabBar() + "\n" + m.list.View()
 	if notice := m.renderNotice(); notice != "" {
 		body += "\n" + notice
 	}
-	return docStyle.Render(body + "\n" + footerStyle.Render(m.keys.footer(m.sort.String())))
+	return docStyle.Render(body + "\n" + footerStyle.Render(m.keys.footer(m.tab, m.sort.String())))
 }

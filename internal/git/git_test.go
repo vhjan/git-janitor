@@ -18,32 +18,32 @@ func TestParseBranchLine(t *testing.T) {
 	}{
 		{
 			"plain branch",
-			"main||||||||||||2 weeks ago|||1700000000|||",
-			Branch{Name: "main", CommitRelative: "2 weeks ago", CommitUnix: 1700000000},
+			"main||||||||||||2 weeks ago|||1700000000||||||Initial commit",
+			Branch{Name: "main", CommitRelative: "2 weeks ago", CommitUnix: 1700000000, Subject: "Initial commit"},
 			true,
 		},
 		{
 			"tracking branch checked out in a worktree",
-			"feat|||[ahead 1, behind 2]|||origin|||refs/heads/feat|||1 day ago|||1700000000|||/tmp/wt",
+			"feat|||[ahead 1, behind 2]|||origin|||refs/heads/feat|||1 day ago|||1700000000|||/tmp/wt|||Fix: a ||| b",
 			Branch{Name: "feat", UpstreamTrack: "[ahead 1, behind 2]", Remote: "origin", RemoteRef: "refs/heads/feat",
-				CommitRelative: "1 day ago", CommitUnix: 1700000000, WorktreePath: "/tmp/wt"},
+				CommitRelative: "1 day ago", CommitUnix: 1700000000, WorktreePath: "/tmp/wt", Subject: "Fix: a ||| b"},
 			true,
 		},
 		{
 			"gone upstream",
-			"old|||[gone]|||origin|||refs/heads/old|||3 months ago|||1600000000|||",
+			"old|||[gone]|||origin|||refs/heads/old|||3 months ago|||1600000000||||||",
 			Branch{Name: "old", UpstreamTrack: "[gone]", Remote: "origin", RemoteRef: "refs/heads/old",
 				CommitRelative: "3 months ago", CommitUnix: 1600000000},
 			true,
 		},
 		{
 			"bad timestamp keeps branch",
-			"x||||||||||||now|||nope|||",
+			"x||||||||||||now|||nope||||||",
 			Branch{Name: "x", CommitRelative: "now"},
 			true,
 		},
 		{"too few fields", "x|||y", Branch{}, false},
-		{"empty name", "||||||||||||a|||1|||", Branch{}, false},
+		{"empty name", "||||||||||||a|||1||||||", Branch{}, false},
 	}
 
 	for _, tt := range tests {
@@ -291,5 +291,18 @@ func TestWorktreePath(t *testing.T) {
 	}
 	if err := r.DeleteBranch("elsewhere", true); err == nil {
 		t.Error("git must refuse to delete a branch checked out in a worktree")
+	}
+}
+
+func TestLocalBranchesReportsCommitSubject(t *testing.T) {
+	r := newTestRepo(t)
+	commitFile(t, r, "a.txt", "a\n", "Add the thing | with ||| separators")
+
+	bs, err := r.LocalBranches()
+	if err != nil || len(bs) != 1 {
+		t.Fatalf("LocalBranches = %v, %v", bs, err)
+	}
+	if got := bs[0].Subject; got != "Add the thing | with ||| separators" {
+		t.Errorf("Subject = %q", got)
 	}
 }

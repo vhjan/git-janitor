@@ -56,6 +56,8 @@ const (
 	SymbolProtected  = "🔒  "  // Branch that cannot be deleted
 	SymbolSelected   = "[x] " // Branch marked for deletion
 	SymbolUnselected = "[ ] " // Branch not selected
+	SymbolCurrent    = "●   " // The checked-out branch (Branches view)
+	SymbolPlain      = "    " // Any other branch (Branches view)
 )
 
 // Shared text styles for terminal output outside of the TUI (help, version, update, summary).

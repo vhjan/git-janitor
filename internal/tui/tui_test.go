@@ -41,6 +41,10 @@ func keyMsg(k string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyEnter}
 	case "esc":
 		return tea.KeyMsg{Type: tea.KeyEsc}
+	case "tab":
+		return tea.KeyMsg{Type: tea.KeyTab}
+	case "shift+tab":
+		return tea.KeyMsg{Type: tea.KeyShiftTab}
 	default:
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
 	}
@@ -102,16 +106,21 @@ func names(m Model) string {
 func TestKeyMapHasNoDuplicateKeys(t *testing.T) {
 	k := defaultKeyMap()
 	groups := map[string][]key.Binding{
-		"list":    k.listBindings(),
-		"confirm": {k.Yes, k.No, k.ToggleRemote},
-		"op":      {k.OpUp, k.OpDown, k.OpRun, k.OpCancel},
+		"confirm dialog": {k.Yes, k.No, k.ToggleRemote},
+		"menus/dialogs":  {k.OpUp, k.OpDown, k.OpRun, k.OpCancel},
 	}
+	// Global keys must not collide with the keys of any single tab (a tab's own keys may repeat across tabs,
+	// e.g. Enter deletes in Cleanup but opens the menu in Branches).
+	for tab := viewTab(0); tab < tabCount; tab++ {
+		groups[tab.String()+" tab"] = append(k.globalBindings(), k.tabBindings(tab)...)
+	}
+
 	for group, bindings := range groups {
 		seen := map[string]string{}
 		for _, b := range bindings {
 			for _, bound := range b.Keys() {
 				if other, dup := seen[bound]; dup {
-					t.Errorf("%s view: key %q is bound to both %q and %q", group, bound, other, b.Help().Desc)
+					t.Errorf("%s: key %q is bound to both %q and %q", group, bound, other, b.Help().Desc)
 				}
 				seen[bound] = b.Help().Desc
 			}
@@ -119,26 +128,62 @@ func TestKeyMapHasNoDuplicateKeys(t *testing.T) {
 	}
 }
 
-func TestHelpRowsCoverAllListBindings(t *testing.T) {
-	want := 2 + len(defaultKeyMap().listBindings()) // 2 navigation rows
-	if got := len(HelpRows()); got != want {
-		t.Errorf("HelpRows returned %d rows, want %d", got, want)
+func TestMenuAcceleratorsDoNotCollideWithMenuNavigation(t *testing.T) {
+	k := defaultKeyMap()
+	m := branchesModel(branches.Branch{Name: "other"})
+	m = press(m, "enter")
+	if m.menu == nil {
+		t.Fatal("menu did not open")
 	}
-	text := ""
-	for _, r := range HelpRows() {
-		text += r[0] + " " + r[1] + "\n"
-	}
-	for _, want := range []string{"FETCH", "MERGE", "REBASE", "UPDATE"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("help is missing the %s action", want)
+	for _, it := range m.menu.items {
+		for _, nav := range []key.Binding{k.OpUp, k.OpDown, k.OpRun, k.OpCancel} {
+			for _, bound := range nav.Keys() {
+				if strings.EqualFold(it.accel, bound) {
+					t.Errorf("menu accelerator %q collides with navigation key %q", it.accel, bound)
+				}
+			}
 		}
 	}
 }
 
-func TestFooterFitsTwoLines(t *testing.T) {
-	f := defaultKeyMap().footer("Alphabetical")
-	if got := strings.Count(f, "\n") + 1; got != footerLines {
-		t.Errorf("footer has %d lines, footerLines says %d", got, footerLines)
+func TestHelpSectionsCoverEveryListBinding(t *testing.T) {
+	k := defaultKeyMap()
+	var text strings.Builder
+	for _, s := range HelpSections() {
+		for _, r := range s.Rows {
+			text.WriteString(r[0] + " " + r[1] + "\n")
+		}
+	}
+	all := append([]key.Binding{}, k.globalBindings()...)
+	for tab := viewTab(0); tab < tabCount; tab++ {
+		all = append(all, k.tabBindings(tab)...)
+	}
+	for _, b := range all {
+		if !strings.Contains(text.String(), b.Help().Desc) {
+			t.Errorf("help is missing the binding %q (%s)", b.Help().Key, b.Help().Desc)
+		}
+	}
+}
+
+func TestFooterIsTwoLinesAndTabSpecific(t *testing.T) {
+	k := defaultKeyMap()
+	seen := map[string]bool{}
+	for tab := viewTab(0); tab < tabCount; tab++ {
+		f := k.footer(tab, "Alphabetical")
+		if got := strings.Count(f, "\n") + 1; got != footerLines {
+			t.Errorf("%s footer has %d lines, footerLines says %d", tab, got, footerLines)
+		}
+		if !strings.Contains(f, "help") || !strings.Contains(f, "Tab: views") {
+			t.Errorf("%s footer must always point to help and the tab key:\n%s", tab, f)
+		}
+		seen[f] = true
+	}
+	if len(seen) != int(tabCount) {
+		t.Error("each tab should have its own footer")
+	}
+	clean, branch := k.footer(tabCleanup, ""), k.footer(tabBranches, "")
+	if strings.Contains(clean, "r: rebase") || strings.Contains(clean, "u: update") || strings.Contains(branch, "m: merged") || strings.Contains(branch, "a: all") {
+		t.Error("footers must only list the keys that work in their tab")
 	}
 }
 
@@ -366,9 +411,9 @@ func TestConfirmRemoteToggle(t *testing.T) {
 // ---- merge / rebase dialog -------------------------------------------------------------------------------------
 
 func TestOpsNeedACurrentBranch(t *testing.T) {
-	m := testModel(branches.Branch{Name: "a"})
+	m := branchesModel(branches.Branch{Name: "a"})
 	m.current = ""
-	m = press(m, "M")
+	m = press(m, "m")
 	if m.state != stateMessage || !strings.Contains(m.message, "detached") {
 		t.Errorf("state=%v message=%q, want a 'detached HEAD' message", m.state, m.message)
 	}
@@ -378,8 +423,8 @@ func TestOpsNeedACurrentBranch(t *testing.T) {
 }
 
 func TestOpsRefuseTheCurrentBranchItself(t *testing.T) {
-	m := testModel(branches.Branch{Name: "cur", Protected: true})
-	for _, k := range []string{"M", "R"} {
+	m := branchesModel(branches.Branch{Name: "cur", Protected: true})
+	for _, k := range []string{"m", "r"} {
 		next := press(m, k)
 		if next.state != stateMessage || !strings.Contains(next.message, "current branch") {
 			t.Errorf("%s on the current branch: state=%v message=%q", k, next.state, next.message)
@@ -388,9 +433,9 @@ func TestOpsRefuseTheCurrentBranchItself(t *testing.T) {
 }
 
 func TestMergeDialogFlow(t *testing.T) {
-	m := testModel(branches.Branch{Name: "feature"})
+	m := branchesModel(branches.Branch{Name: "feature"})
 
-	m, cmd := pressCmd(m, "M")
+	m, cmd := pressCmd(m, "m")
 	if m.state != stateOp || m.op == nil || !m.op.loading || cmd == nil {
 		t.Fatalf("M should open the dialog and start the pre-flight (state=%v)", m.state)
 	}
@@ -436,8 +481,8 @@ func TestMergeDialogFlow(t *testing.T) {
 }
 
 func TestOpDialogCancelAndUpToDate(t *testing.T) {
-	m := testModel(branches.Branch{Name: "feature"})
-	m = press(m, "R")
+	m := branchesModel(branches.Branch{Name: "feature"})
+	m = press(m, "r")
 	if m.state != stateOp || len(m.op.choices) != 1 || !m.op.choices[0].rebase {
 		t.Fatalf("R should open a rebase-only dialog: %+v", m.op)
 	}
@@ -457,8 +502,8 @@ func TestOpDialogCancelAndUpToDate(t *testing.T) {
 }
 
 func TestUpdateOffersRebaseAndMergeFromDefaultBranch(t *testing.T) {
-	m := testModel(branches.Branch{Name: "whatever"})
-	m, cmd := pressCmd(m, "U")
+	m := branchesModel(branches.Branch{Name: "whatever"})
+	m, cmd := pressCmd(m, "u")
 	if m.state != stateOp || cmd == nil {
 		t.Fatal("U should open the update dialog")
 	}
@@ -722,12 +767,13 @@ func TestEndToEndMerge(t *testing.T) {
 	r.git("checkout", "main")
 
 	m := loaded(t, r, loadOptions{})
+	m = press(m, "2") // operations live in the Branches tab
 	// alphabetical: feature, main -> the cursor starts on feature
 	if sel := m.list.SelectedItem().(item); sel.Name != "feature" {
 		t.Fatalf("highlighted %q, want feature", sel.Name)
 	}
 
-	m, cmd := pressCmd(m, "M")
+	m, cmd := pressCmd(m, "m")
 	m, _ = settle(m, cmd) // runs the real pre-flight
 	if m.op == nil || m.op.loading {
 		t.Fatal("pre-flight did not complete")
@@ -772,10 +818,11 @@ func TestEndToEndMergeConflictIsReportedAndAborted(t *testing.T) {
 	head := r.repo.ShortSHA("HEAD")
 
 	m := loaded(t, r, loadOptions{})
+	m = press(m, "2") // operations live in the Branches tab
 	for m.list.SelectedItem().(item).Name != "other" {
 		m = press(m, "j")
 	}
-	m, cmd := pressCmd(m, "M")
+	m, cmd := pressCmd(m, "m")
 	m, _ = settle(m, cmd)
 	m, cmd = pressCmd(m, "enter")
 	m, _ = settle(m, cmd)
@@ -793,12 +840,12 @@ func TestEndToEndMergeConflictIsReportedAndAborted(t *testing.T) {
 
 // A pre-flight result that arrives after its dialog was cancelled must not leak into the next dialog.
 func TestStalePreflightIsIgnored(t *testing.T) {
-	m := testModel(branches.Branch{Name: "alpha"}, branches.Branch{Name: "beta"})
+	m := branchesModel(branches.Branch{Name: "alpha"}, branches.Branch{Name: "beta"})
 
-	m = press(m, "M") // dialog for alpha (cursor starts on alpha)
+	m = press(m, "m") // dialog for alpha (cursor starts on alpha)
 	staleID := m.op.id
 	m = press(m, "esc")
-	m = press(press(m, "j"), "M") // dialog for beta
+	m = press(press(m, "j"), "m") // dialog for beta
 	if m.op.title() != "Merge beta into cur" || m.op.id == staleID {
 		t.Fatalf("test setup: op = %+v", m.op)
 	}
@@ -815,11 +862,11 @@ func TestStalePreflightIsIgnored(t *testing.T) {
 }
 
 func TestRebaseWarnsWhenCurrentBranchIsPushed(t *testing.T) {
-	m := testModel(
+	m := branchesModel(
 		branches.Branch{Name: "cur", Protected: true, Remote: "origin"},
 		branches.Branch{Name: "other"},
 	)
-	m = press(m, "U")
+	m = press(m, "u")
 	m, _ = feed(m, preflightMsg{id: m.op.id, ref: "main", check: git.MergeCheck{Incoming: 1, Checked: true}})
 	if !strings.Contains(m.View(), "already pushed") {
 		t.Errorf("rebase of a pushed branch should warn about rewriting history:\n%s", m.View())
@@ -828,8 +875,8 @@ func TestRebaseWarnsWhenCurrentBranchIsPushed(t *testing.T) {
 		t.Error("the warning only applies to the rebase option, not to merge")
 	}
 
-	unpushed := testModel(branches.Branch{Name: "cur", Protected: true})
-	unpushed = press(unpushed, "U")
+	unpushed := branchesModel(branches.Branch{Name: "cur", Protected: true})
+	unpushed = press(unpushed, "u")
 	unpushed, _ = feed(unpushed, preflightMsg{id: unpushed.op.id, ref: "main", check: git.MergeCheck{Incoming: 1, Checked: true}})
 	if strings.Contains(unpushed.View(), "already pushed") {
 		t.Error("a local-only branch can be rebased freely, no warning expected")
@@ -882,4 +929,11 @@ func TestStaleDefaultBranchNotice(t *testing.T) {
 	if strings.Contains(m.View(), "behind") || m.list.Height() != baseHeight {
 		t.Errorf("notice should disappear when in sync (height %d, want %d)", m.list.Height(), baseHeight)
 	}
+}
+
+// branchesModel is testModel switched to the Branches tab.
+func branchesModel(items ...branches.Branch) Model {
+	m := testModel(items...)
+	m.setTab(tabBranches)
+	return m
 }

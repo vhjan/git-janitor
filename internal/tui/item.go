@@ -24,7 +24,8 @@ SOFTWARE.
 
 /*
 This file defines the 'item' type, which adapts a branches.Branch to the list.Item interface from the
-charmbracelet/bubbles/list package. It represents a single branch row in the TUI list.
+charmbracelet/bubbles/list package. It represents a single branch row in the TUI list, rendered either with a
+selection checkbox (Cleanup view) or as a plain branch overview (Branches view).
 */
 
 package tui
@@ -37,14 +38,27 @@ import (
 	"github.com/vhjan/git-janitor/internal/theme"
 )
 
-// item is a selectable branch row. The embedded Branch carries the git-derived state; selected is pure UI state.
+// item is a selectable branch row. The embedded Branch carries the git-derived state; the other fields are pure UI
+// state.
 type item struct {
 	branches.Branch
 	selected bool // Whether the user has marked this branch for deletion
+	plain    bool // Render without a selection checkbox (Branches view)
 }
 
-// Title returns the primary text of the row, prefixed with a symbol for its state (protected, selected, ...).
+// Title returns the primary text of the row, prefixed with a symbol for its state.
 func (i item) Title() string {
+	if i.plain {
+		switch {
+		case i.Current:
+			return theme.SymbolCurrent + i.Name
+		case i.Protected:
+			return theme.SymbolProtected + i.Name
+		default:
+			return theme.SymbolPlain + i.Name
+		}
+	}
+
 	if i.Protected {
 		return theme.SymbolProtected + i.Name
 	}
@@ -54,8 +68,8 @@ func (i item) Title() string {
 	return theme.SymbolUnselected + i.Name
 }
 
-// Description provides the secondary text: status tags, sync state with the upstream, a data-loss warning and the
-// last active date.
+// Description provides the secondary text: status tags, sync state with the upstream, a data-loss warning, the
+// last active date and, in the Branches view, the last commit subject.
 func (i item) Description() string {
 	var parts []string
 
@@ -88,8 +102,14 @@ func (i item) Description() string {
 	if i.Age != "" {
 		parts = append(parts, "Last active: "+i.Age)
 	}
+	if i.plain && i.Subject != "" {
+		parts = append(parts, "“"+i.Subject+"”")
+	}
 
 	if len(parts) == 0 {
+		if i.plain {
+			return ""
+		}
 		return "Press space to toggle"
 	}
 	return strings.Join(parts, " | ")
