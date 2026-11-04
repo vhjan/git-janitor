@@ -40,9 +40,14 @@ import (
 func runTUI(ctx *Context) int {
 	repo, err := git.Open("")
 	if err != nil {
-		if errors.Is(err, git.ErrNotRepo) {
+		var tooOld *git.TooOldError
+		switch {
+		case errors.Is(err, git.ErrNotRepo):
 			fmt.Fprintln(ctx.Stdout, theme.Warning.Render("❌ Error: Not inside a git repository."))
-		} else {
+		case errors.As(err, &tooOld):
+			fmt.Fprintln(ctx.Stdout, theme.Warning.Render("❌ Error: ")+tooOld.Error())
+			fmt.Fprintln(ctx.Stdout, theme.Muted.Render("   Please upgrade git: https://git-scm.com/downloads"))
+		default:
 			fmt.Fprintln(ctx.Stdout, theme.Warning.Render("❌ Error: ")+err.Error())
 		}
 		return 1

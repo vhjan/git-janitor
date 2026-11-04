@@ -32,6 +32,8 @@ package git
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -57,6 +59,33 @@ func (e *Error) Error() string {
 
 func (e *Error) Unwrap() error { return e.Err }
 
+// Reason returns the most useful human-readable explanation of the failure: git's own message when it printed
+// one, otherwise the underlying error.
+func (e *Error) Reason() string {
+	if e.Stderr != "" {
+		return e.Stderr
+	}
+	return e.Err.Error()
+}
+
+// Reason extracts a short explanation from any error returned by this package.
+func Reason(err error) string {
+	var ge *Error
+	if errors.As(err, &ge) {
+		return ge.Reason()
+	}
+	return err.Error()
+}
+
+// exitCode returns the process exit code behind err, or -1 when err is not an exit error.
+func exitCode(err error) int {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode()
+	}
+	return -1
+}
+
 // Repo represents a Git repository on disk. The zero value operates on the current working directory.
 type Repo struct {
 	// Dir is the working directory for all git commands. Empty means the process' current directory.
@@ -66,9 +95,19 @@ type Repo struct {
 	Observer func(args []string, err error)
 }
 
-// Open verifies that dir (or the current directory when empty) is inside a work tree and returns a Repo for it.
+// Open verifies that git is new enough and that dir (or the current directory when empty) is inside a work tree,
+// and returns a Repo for it.
 func Open(dir string) (*Repo, error) {
 	r := &Repo{Dir: dir}
+
+	v, err := r.Version()
+	if err != nil {
+		return nil, fmt.Errorf("could not run git (is it installed and on your PATH?): %w", err)
+	}
+	if v.Less(MinVersion) {
+		return nil, &TooOldError{Found: v}
+	}
+
 	if _, err := r.run("rev-parse", "--is-inside-work-tree"); err != nil {
 		return nil, ErrNotRepo
 	}
@@ -77,19 +116,29 @@ func Open(dir string) (*Repo, error) {
 
 // run executes `git <args...>` and returns its stdout. On failure the returned error is an *Error.
 func (r *Repo) run(args ...string) (string, error) {
+	out, _, err := r.runIO(args...)
+	return out, err
+}
+
+// runIO is like run but also returns stderr, which some commands (e.g. fetch) use for their progress report.
+//
+// Git is started non-interactively (it must never block the TUI waiting for credentials or an editor) and with the
+// C locale, because some output (e.g. "[deleted]" in fetch --prune) is parsed and git translates it otherwise.
+func (r *Repo) runIO(args ...string) (stdout, stderr string, err error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = r.Dir
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_EDITOR=true", "LC_ALL=C")
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
 
-	out, err := cmd.Output()
-	if err != nil {
-		err = &Error{Args: args, Stderr: strings.TrimSpace(stderr.String()), Err: err}
+	if err = cmd.Run(); err != nil {
+		err = &Error{Args: args, Stderr: strings.TrimSpace(errBuf.String()), Err: err}
 	}
 	if r.Observer != nil {
 		r.Observer(args, err)
 	}
-	return string(out), err
+	return outBuf.String(), errBuf.String(), err
 }
 
 // splitLines splits command output into trimmed, non-empty lines (tolerating Windows line endings).

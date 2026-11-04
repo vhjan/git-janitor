@@ -23,7 +23,7 @@ SOFTWARE.
 */
 
 /*
-This file implements bulk branch deletion with dry-run support.
+This file implements bulk branch deletion (local, and optionally the matching remote branch) with dry-run support.
 */
 
 package branches
@@ -34,26 +34,56 @@ import (
 	"github.com/vhjan/git-janitor/internal/git"
 )
 
-// DeleteResult reports the outcome of a bulk deletion.
-type DeleteResult struct {
-	Deleted []string // Branches deleted (or that would be deleted in a dry run)
-	Errors  []string // Human-readable failures
+// DeleteOptions controls a bulk deletion.
+type DeleteOptions struct {
+	DryRun       bool // Report what would happen without deleting anything
+	DeleteRemote bool // Also delete the upstream branch on the remote, where there is one
 }
 
-// Delete force-deletes the given branches. With dryRun set nothing is removed and every branch is reported as if
-// it had been deleted.
-func Delete(repo *git.Repo, names []string, dryRun bool) DeleteResult {
+// Deleted records one removed branch.
+type Deleted struct {
+	Name          string
+	SHA           string // Abbreviated tip commit, so the branch can be restored with `git branch <name> <sha>`
+	RemoteDeleted bool   // The upstream branch on the remote was deleted as well
+}
+
+// DeleteResult reports the outcome of a bulk deletion.
+type DeleteResult struct {
+	Deleted []Deleted // Branches deleted (or that would be deleted in a dry run)
+	Errors  []string  // Human-readable failures
+}
+
+// Delete removes the given branches. Branches are deleted with -D because git's own "fully merged" check only looks
+// at HEAD and the upstream, which would wrongly refuse branches that were merged into the default branch. Deciding
+// what is safe to delete is the caller's job (see Branch.AtRisk).
+//
+// With opts.DeleteRemote the upstream branch is deleted after the local one succeeded.
+func Delete(repo *git.Repo, targets []Branch, opts DeleteOptions) DeleteResult {
 	var res DeleteResult
-	for _, name := range names {
-		if dryRun {
-			res.Deleted = append(res.Deleted, name)
+	for _, b := range targets {
+		wantRemote := opts.DeleteRemote && b.RemoteDeletable()
+		d := Deleted{Name: b.Name, SHA: repo.ShortSHA(b.Name)}
+
+		if opts.DryRun {
+			d.RemoteDeleted = wantRemote
+			res.Deleted = append(res.Deleted, d)
 			continue
 		}
-		if err := repo.DeleteBranch(name, true); err != nil {
-			res.Errors = append(res.Errors, fmt.Sprintf("Failed to delete %s", name))
+
+		if err := repo.DeleteBranch(b.Name, true); err != nil {
+			res.Errors = append(res.Errors, fmt.Sprintf("Failed to delete %s: %s", b.Name, git.Reason(err)))
 			continue
 		}
-		res.Deleted = append(res.Deleted, name)
+
+		if wantRemote {
+			if err := repo.DeleteRemoteBranch(b.Remote, b.RemoteBranch); err != nil {
+				res.Errors = append(res.Errors, fmt.Sprintf("Deleted %s locally, but not %s/%s: %s",
+					b.Name, b.Remote, b.RemoteBranch, git.Reason(err)))
+			} else {
+				d.RemoteDeleted = true
+			}
+		}
+		res.Deleted = append(res.Deleted, d)
 	}
 	return res
 }

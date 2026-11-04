@@ -23,12 +23,15 @@ SOFTWARE.
 */
 
 /*
-This file implements the main view: the filterable branch list with selection, bulk-select shortcuts and sorting.
+This file implements the main view: the filterable branch list with selection, bulk-select shortcuts, sorting and
+the entry points to fetching, merging, rebasing and deleting.
 */
 
 package tui
 
 import (
+	"fmt"
+
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
@@ -71,7 +74,7 @@ func (m Model) handleListKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 		return m, m.selectWhere(func(item) bool { return true }), true
 
 	case key.Matches(msg, m.keys.SelectMerged):
-		return m, m.selectWhere(func(i item) bool { return i.Merged }), true
+		return m, m.selectWhere(func(i item) bool { return i.FullyMerged() }), true
 
 	case key.Matches(msg, m.keys.SelectGone):
 		return m, m.selectWhere(func(i item) bool { return i.Gone }), true
@@ -88,9 +91,26 @@ func (m Model) handleListKey(msg tea.KeyMsg) (Model, tea.Cmd, bool) {
 		sortItems(items, m.sort)
 		return m, m.list.SetItems(items), true
 
+	case key.Matches(msg, m.keys.Fetch):
+		busy := m.startBusy("Fetching and pruning remotes...")
+		return m, tea.Batch(busy, loadBranchesCmd(m.repo, m.cfg, loadOptions{fetch: true, announce: true})), true
+
+	case key.Matches(msg, m.keys.Merge):
+		next, cmd := m.beginOp(opMerge)
+		return next, cmd, true
+
+	case key.Matches(msg, m.keys.Rebase):
+		next, cmd := m.beginOp(opRebase)
+		return next, cmd, true
+
+	case key.Matches(msg, m.keys.Update):
+		next, cmd := m.beginOp(opUpdate)
+		return next, cmd, true
+
 	case key.Matches(msg, m.keys.Proceed):
-		if len(m.selectedNames()) > 0 {
+		if len(m.selectedItems()) > 0 {
 			m.state = stateConfirm
+			m.deleteRemote = false
 		}
 		return m, nil, true
 	}
@@ -129,17 +149,63 @@ func (m *Model) updateVisible(fn func(*item)) tea.Cmd {
 	return m.list.SetItems(updated)
 }
 
+// selectedItems returns all selected, unprotected branches in list order.
+func (m Model) selectedItems() []item {
+	var items []item
+	for _, li := range m.list.Items() {
+		if i, ok := li.(item); ok && i.selected && !i.Protected {
+			items = append(items, i)
+		}
+	}
+	return items
+}
+
 // selectedNames returns the names of all selected, unprotected branches in list order.
 func (m Model) selectedNames() []string {
 	var names []string
-	for _, li := range m.list.Items() {
-		if i, ok := li.(item); ok && i.selected && !i.Protected {
-			names = append(names, i.Name)
-		}
+	for _, i := range m.selectedItems() {
+		names = append(names, i.Name)
 	}
 	return names
 }
 
+// staleDefaultNotice warns when the local default branch lacks commits that its remote has. The "merged" checks
+// compare against the local default branch (deliberately: users may not want to update it yet), so merges that
+// happened on the remote, such as squash-merged pull requests, would not show up. Returns "" when in sync.
+func (m Model) staleDefaultNotice() string {
+	if m.defaultBehind <= 0 || m.defaultUpstream == "" {
+		return ""
+	}
+	return fmt.Sprintf("⚠ Local %s is %d commit%s behind %s, so branches merged on the remote may not show as merged. "+
+		"Checking against local %s as it is.",
+		m.defaultBranch, m.defaultBehind, plural(m.defaultBehind), m.defaultUpstream, m.defaultBranch)
+}
+
+// renderNotice renders the stale-default notice wrapped to the window width, or "" if there is none.
+func (m Model) renderNotice() string {
+	text := m.staleDefaultNotice()
+	if text == "" {
+		return ""
+	}
+	h, _ := docStyle.GetFrameSize()
+	width := max(m.width-h, 20)
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(theme.ColorWarning)).PaddingLeft(2).Width(width).Render(text)
+}
+
+// resizeList gives the list the space left after the margins, the footer and the optional notice.
+func (m *Model) resizeList() {
+	h, v := docStyle.GetFrameSize()
+	reserved := v + footerLines + 1
+	if notice := m.renderNotice(); notice != "" {
+		reserved += lipgloss.Height(notice)
+	}
+	m.list.SetSize(m.width-h, m.height-reserved)
+}
+
 func (m Model) viewList() string {
-	return docStyle.Render(m.list.View() + "\n" + footerStyle.Render(m.keys.footer(m.sort.String())))
+	body := m.list.View()
+	if notice := m.renderNotice(); notice != "" {
+		body += "\n" + notice
+	}
+	return docStyle.Render(body + "\n" + footerStyle.Render(m.keys.footer(m.sort.String())))
 }

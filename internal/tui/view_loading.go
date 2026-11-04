@@ -23,7 +23,7 @@ SOFTWARE.
 */
 
 /*
-This file implements the loading view shown while branches are being fetched.
+This file implements the loading view shown while background work (fetching, merging, deleting) is running.
 */
 
 package tui
@@ -52,6 +52,6 @@ func (m Model) updateLoading(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) viewLoading() string {
-	s := fmt.Sprintf("\n\n   %s Fetching git branches...\n\n", m.spinner.View())
+	s := fmt.Sprintf("\n\n   %s %s\n\n", m.spinner.View(), m.busy)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, s)
 }

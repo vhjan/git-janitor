@@ -30,6 +30,7 @@ charmbracelet/bubbles/list package. It represents a single branch row in the TUI
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/vhjan/git-janitor/internal/branches"
@@ -53,38 +54,67 @@ func (i item) Title() string {
 	return theme.SymbolUnselected + i.Name
 }
 
-// Description provides the secondary text: status tags (Merged, Gone, Stale) and the last active date.
+// Description provides the secondary text: status tags, sync state with the upstream, a data-loss warning and the
+// last active date.
 func (i item) Description() string {
+	var parts []string
+
 	if i.Protected {
-		d := "Protected or active branch (cannot be deleted)"
-		if i.Age != "" {
-			d += " | Last active: " + i.Age
+		parts = append(parts, "Protected: "+i.ProtectedReason)
+	} else {
+		switch {
+		case i.Merged:
+			parts = append(parts, "Merged")
+		case i.Squashed:
+			parts = append(parts, "Merged (squash/rebase)")
 		}
-		return d
+		if i.Gone {
+			parts = append(parts, "Gone (Upstream deleted)")
+		}
+		if i.Stale {
+			parts = append(parts, "Stale")
+		}
+		if i.Remote == "" && !i.Gone {
+			parts = append(parts, "Local only")
+		}
+		if i.AtRisk() {
+			parts = append(parts, fmt.Sprintf("⚠ %d unpushed commit%s", i.Unpushed, plural(i.Unpushed)))
+		}
 	}
 
-	var tags []string
-	if i.Merged {
-		tags = append(tags, "Merged")
-	}
-	if i.Gone {
-		tags = append(tags, "Gone (Upstream deleted)")
-	}
-	if i.Stale {
-		tags = append(tags, "Stale")
-	}
-
-	desc := "Press space to toggle"
-	if len(tags) > 0 {
-		desc += " | " + strings.Join(tags, ", ")
+	if sync := i.syncInfo(); sync != "" {
+		parts = append(parts, sync)
 	}
 	if i.Age != "" {
-		desc += " | Last active: " + i.Age
+		parts = append(parts, "Last active: "+i.Age)
 	}
-	return desc
+
+	if len(parts) == 0 {
+		return "Press space to toggle"
+	}
+	return strings.Join(parts, " | ")
+}
+
+// syncInfo renders the position relative to the upstream, e.g. "↑2 ↓1".
+func (i item) syncInfo() string {
+	var s []string
+	if i.Ahead > 0 {
+		s = append(s, fmt.Sprintf("↑%d", i.Ahead))
+	}
+	if i.Behind > 0 {
+		s = append(s, fmt.Sprintf("↓%d", i.Behind))
+	}
+	return strings.Join(s, " ")
 }
 
 // FilterValue is the string the list's fuzzy finder matches against.
 func (i item) FilterValue() string {
 	return i.Name
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }

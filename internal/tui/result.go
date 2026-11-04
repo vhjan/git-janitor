@@ -64,8 +64,22 @@ func renderSummaryBox(r Result) string {
 			header = "Dry Run - Would Delete (but not actually):"
 		}
 		sb.WriteString(theme.Success.Render(header) + "\n")
-		for _, b := range r.Deleted {
-			sb.WriteString(fmt.Sprintf("  - %s\n", b))
+		for _, d := range r.Deleted {
+			var notes []string
+			if d.SHA != "" {
+				notes = append(notes, d.SHA)
+			}
+			if d.RemoteDeleted {
+				notes = append(notes, "+ remote")
+			}
+			line := "  - " + d.Name
+			if len(notes) > 0 {
+				line += " " + theme.Muted.Render("("+strings.Join(notes, ", ")+")")
+			}
+			sb.WriteString(line + "\n")
+		}
+		if !r.DryRun {
+			sb.WriteString("\n" + theme.Muted.Render("Restore one with: git branch <name> <sha>") + "\n")
 		}
 		sb.WriteString("\n")
 	}

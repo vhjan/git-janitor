@@ -24,7 +24,7 @@ SOFTWARE.
 
 /*
 This file defines the asynchronous messages of the TUI and the commands that produce them. All background work
-(loading branches, checking for updates, and later: fetching, merging, ...) is expressed as a tea.Cmd returning a
+(loading branches, fetching, merging, deleting, checking for updates) is expressed as a tea.Cmd returning a
 message, which keeps the Update loop free of blocking calls.
 */
 
@@ -44,19 +44,43 @@ import (
 	"github.com/vhjan/git-janitor/internal/updater"
 )
 
-// branchesLoadedMsg carries the result of loadBranchesCmd.
-type branchesLoadedMsg struct {
-	items []list.Item
-	err   error
+// loadOptions controls what loadBranchesCmd does before reading the branches.
+type loadOptions struct {
+	fetch    bool // Run `git fetch --prune` first so "[gone]" upstreams are accurate
+	announce bool // Report the fetch outcome to the user even when nothing was pruned (explicit user action)
 }
 
-// loadBranchesCmd prunes stale remote-tracking refs, then reads and classifies the local branches.
-func loadBranchesCmd(repo *git.Repo, cfg config.Config) tea.Cmd {
-	return func() tea.Msg {
-		// Prune so branches without an upstream show up as "gone". A failure (e.g. offline) is not fatal.
-		_ = repo.Fetch(true)
+// branchesLoadedMsg carries the result of loadBranchesCmd.
+type branchesLoadedMsg struct {
+	items           []list.Item
+	current         string // Checked-out branch
+	defaultBranch   string
+	defaultUpstream string // Remote-tracking branch the default branch follows, "" if none
+	defaultBehind   int    // Commits the local default branch is behind that upstream
+	note            string // Short status line about the fetch, may be empty
+	err             error
+}
 
-		loaded, err := branches.Load(repo, branches.Options{
+// loadBranchesCmd optionally fetches/prunes, then reads and classifies the local branches.
+func loadBranchesCmd(repo *git.Repo, cfg config.Config, opts loadOptions) tea.Cmd {
+	return func() tea.Msg {
+		var note string
+		if opts.fetch {
+			pruned, err := repo.Fetch(true)
+			switch {
+			case err != nil && opts.announce:
+				// Typically offline; the list is still useful, just possibly out of date.
+				note = "Fetch failed: " + git.Reason(err)
+			case err != nil:
+				// Silent on startup: working offline is normal.
+			case len(pruned) > 0:
+				note = fmt.Sprintf("Fetched. Pruned %d stale remote ref%s", len(pruned), plural(len(pruned)))
+			case opts.announce:
+				note = "Fetched. Nothing to prune"
+			}
+		}
+
+		snap, err := branches.Load(repo, branches.Options{
 			ProtectPatterns: cfg.Protect,
 			StaleDays:       cfg.StaleDays,
 		})
@@ -64,11 +88,75 @@ func loadBranchesCmd(repo *git.Repo, cfg config.Config) tea.Cmd {
 			return branchesLoadedMsg{err: err}
 		}
 
-		items := make([]list.Item, len(loaded))
-		for i, b := range loaded {
+		items := make([]list.Item, len(snap.Branches))
+		for i, b := range snap.Branches {
 			items[i] = item{Branch: b}
 		}
-		return branchesLoadedMsg{items: items}
+		return branchesLoadedMsg{
+			items: items, current: snap.Current, defaultBranch: snap.Default, note: note,
+			defaultUpstream: snap.DefaultUpstream, defaultBehind: snap.DefaultBehind,
+		}
+	}
+}
+
+// deleteDoneMsg carries the outcome of deleteCmd.
+type deleteDoneMsg struct {
+	result branches.DeleteResult
+}
+
+// deleteCmd deletes branches in the background (remote deletion involves the network).
+func deleteCmd(repo *git.Repo, targets []branches.Branch, opts branches.DeleteOptions) tea.Cmd {
+	return func() tea.Msg {
+		return deleteDoneMsg{result: branches.Delete(repo, targets, opts)}
+	}
+}
+
+// preflightMsg carries the read-only inspection shown in the merge/rebase dialog.
+type preflightMsg struct {
+	id    int    // Dialog that asked; results for an earlier, cancelled dialog are dropped
+	ref   string // The ref the operation uses (resolved for "update")
+	check git.MergeCheck
+	err   error
+}
+
+// preflightCmd inspects what merging/rebasing would do, without touching the working tree.
+func preflightCmd(repo *git.Repo, id int, kind opKind, current, ref, defaultBranch string) tea.Cmd {
+	return func() tea.Msg {
+		if kind == opUpdate {
+			ref = branches.UpdateTarget(repo, defaultBranch)
+		}
+		check, err := repo.CheckMerge(current, ref)
+		return preflightMsg{id: id, ref: ref, check: check, err: err}
+	}
+}
+
+// opDoneMsg carries the outcome of opCmd.
+type opDoneMsg struct {
+	text string // Success message
+	err  error
+}
+
+// opCmd performs the chosen merge or rebase of the current branch. In a dry run it only reports the command.
+func opCmd(repo *git.Repo, choice opChoice, current, ref string, dryRun bool) tea.Cmd {
+	return func() tea.Msg {
+		command := git.MergeCommand(ref, choice.mode)
+		if choice.rebase {
+			command = git.RebaseCommand(ref)
+		}
+		if dryRun {
+			return opDoneMsg{text: "DRY RUN: would run `" + command + "`"}
+		}
+
+		if choice.rebase {
+			if err := branches.Rebase(repo, ref); err != nil {
+				return opDoneMsg{err: err}
+			}
+			return opDoneMsg{text: fmt.Sprintf("Rebased %s onto %s", current, ref)}
+		}
+		if err := branches.Merge(repo, ref, choice.mode); err != nil {
+			return opDoneMsg{err: err}
+		}
+		return opDoneMsg{text: fmt.Sprintf("Merged %s into %s", ref, current)}
 	}
 }
 
