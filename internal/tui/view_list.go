@@ -206,15 +206,6 @@ func (m Model) selectedItems() []item {
 	return items
 }
 
-// selectedNames returns the names of all selected, unprotected branches in list order.
-func (m Model) selectedNames() []string {
-	var names []string
-	for _, i := range m.selectedItems() {
-		names = append(names, i.Name)
-	}
-	return names
-}
-
 // tabBar renders the row of tabs with the active one highlighted.
 func (m Model) tabBar() string {
 	active := lipgloss.NewStyle().

@@ -937,3 +937,12 @@ func branchesModel(items ...branches.Branch) Model {
 	m.setTab(tabBranches)
 	return m
 }
+
+// selectedNames returns the names of all selected, unprotected branches in list order.
+func (m Model) selectedNames() []string {
+	var names []string
+	for _, i := range m.selectedItems() {
+		names = append(names, i.Name)
+	}
+	return names
+}

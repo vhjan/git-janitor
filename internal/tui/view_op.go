@@ -162,7 +162,7 @@ func (m Model) updateOp(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(k, m.keys.OpRun):
-		if d.loading {
+		if d.loading || d.checkErr != nil { // still checking, or the branches could not be inspected
 			return m, nil
 		}
 		choice := d.choices[d.cursor]

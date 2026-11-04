@@ -304,3 +304,67 @@ func TestLoadReportsStaleLocalDefaultBranch(t *testing.T) {
 		t.Errorf("no upstream: upstream=%q behind=%d, want empty and 0", snap.DefaultUpstream, snap.DefaultBehind)
 	}
 }
+
+// A branch created with `git checkout -b feature origin/main` has origin/main as its upstream. "Also delete the
+// remote branch" must never turn that into `git push origin --delete main`.
+func TestRemoteDeletionNeverTouchesSomeoneElsesBranch(t *testing.T) {
+	repo, dir := newRepo(t)
+
+	sh(t, dir, "checkout", "-b", "tracks-default", "origin/main") // upstream is the default branch
+	commit(t, dir, "a.txt", "a\n")
+	sh(t, dir, "checkout", "main")
+
+	sh(t, dir, "checkout", "-b", "topic", "main")
+	commit(t, dir, "t.txt", "t\n")
+	sh(t, dir, "push", "-u", "origin", "topic")
+	sh(t, dir, "checkout", "-b", "topic-copy", "topic") // shares origin/topic as its upstream
+	sh(t, dir, "branch", "--set-upstream-to=origin/topic", "topic-copy")
+	sh(t, dir, "checkout", "main")
+
+	snap, err := Load(repo, Options{StaleDays: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := byName(snap)
+
+	for name, wantReason := range map[string]string{
+		"tracks-default": "default branch",
+		"topic":          "shared",
+		"topic-copy":     "shared",
+	} {
+		got := b[name]
+		if got.RemoteDeletable() || !strings.Contains(got.RemoteKeep, wantReason) {
+			t.Errorf("%s: RemoteDeletable=%v RemoteKeep=%q, want it kept because %q", name, got.RemoteDeletable(), got.RemoteKeep, wantReason)
+		}
+	}
+
+	// Even if a caller asks for remote deletion, nothing is pushed.
+	res := Delete(repo, []Branch{b["tracks-default"]}, DeleteOptions{DeleteRemote: true})
+	if len(res.Errors) != 0 || len(res.Deleted) != 1 || res.Deleted[0].RemoteDeleted {
+		t.Fatalf("result: %+v", res)
+	}
+	if _, err := repo.Fetch(true); err != nil {
+		t.Fatal(err)
+	}
+	if !repo.RefExists("origin/main") {
+		t.Fatal("origin/main was deleted on the remote")
+	}
+}
+
+func TestProtectedUpstreamsAreKept(t *testing.T) {
+	repo, dir := newRepo(t)
+	sh(t, dir, "checkout", "-b", "release-1", "main")
+	commit(t, dir, "r.txt", "r\n")
+	sh(t, dir, "push", "-u", "origin", "release-1")
+	sh(t, dir, "checkout", "-b", "mine", "release-1")
+	sh(t, dir, "branch", "--set-upstream-to=origin/release-1", "mine")
+	sh(t, dir, "checkout", "main")
+
+	snap, err := Load(repo, Options{StaleDays: 30, ProtectPatterns: []string{"release-*"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := byName(snap)["mine"]; got.RemoteDeletable() || !strings.Contains(got.RemoteKeep, "protected") {
+		t.Errorf("mine: RemoteDeletable=%v RemoteKeep=%q, want its protected upstream kept", got.RemoteDeletable(), got.RemoteKeep)
+	}
+}

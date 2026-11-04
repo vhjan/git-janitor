@@ -5,7 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // divergedRepo builds: main and "other" both changed shared.txt differently after a common base (conflicting), and
@@ -253,5 +256,73 @@ func TestMergeAndRebaseCommandStrings(t *testing.T) {
 	}
 	if got := RebaseCommand("origin/main"); got != "git rebase origin/main" {
 		t.Errorf("RebaseCommand = %q", got)
+	}
+}
+
+func TestAbortHintMatchesTheOperation(t *testing.T) {
+	cases := []struct {
+		op     string
+		squash bool
+		want   string
+	}{
+		{"merge", false, "git merge --abort"},
+		{"merge", true, "git reset --merge"}, // `merge --abort` fails after --squash: there is no MERGE_HEAD
+		{"rebase", false, "git rebase --abort"},
+	}
+	for _, c := range cases {
+		if got := abortHint(c.op, c.squash); got != c.want {
+			t.Errorf("abortHint(%q, squash=%v) = %q, want %q", c.op, c.squash, got, c.want)
+		}
+	}
+}
+
+// Unrelated histories are a real failure, not "git too old to predict conflicts".
+func TestCheckMergeReportsRealFailures(t *testing.T) {
+	r := newTestRepo(t)
+	requireMergeTree(t, r)
+	commitFile(t, r, "a.txt", "a\n", "a")
+	mustGit(t, r, "checkout", "--orphan", "island")
+	commitFile(t, r, "b.txt", "b\n", "unrelated root")
+	mustGit(t, r, "checkout", "main")
+
+	c, err := r.CheckMerge("main", "island")
+	if err == nil {
+		t.Fatalf("CheckMerge of unrelated histories = %+v, want an error", c)
+	}
+}
+
+// branches.Load runs git from several goroutines, so Observer calls must never overlap: an observer that appends
+// to a slice or writes a log panel would otherwise race.
+func TestObserverCallsAreSerialised(t *testing.T) {
+	r := newTestRepo(t)
+
+	var inFlight, overlaps, calls atomic.Int32
+	r.Observer = func([]string, error) {
+		if inFlight.Add(1) > 1 {
+			overlaps.Add(1)
+		}
+		time.Sleep(2 * time.Millisecond) // long enough for any unserialised caller to pile in
+		inFlight.Add(-1)
+		calls.Add(1)
+	}
+
+	const workers, each = 8, 5
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < each; i++ {
+				r.CurrentBranch()
+			}
+		}()
+	}
+	wg.Wait()
+
+	if calls.Load() != workers*each {
+		t.Fatalf("observer saw %d calls, want %d", calls.Load(), workers*each)
+	}
+	if overlaps.Load() != 0 {
+		t.Errorf("observer calls overlapped %d times; Repo must serialise them", overlaps.Load())
 	}
 }

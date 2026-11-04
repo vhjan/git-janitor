@@ -60,6 +60,7 @@ type Branch struct {
 	Unpushed        int    // Commits that exist only on this branch (not on the default branch nor on any remote)
 	Remote          string // Remote of its upstream ("origin"), "" when it has none
 	RemoteBranch    string // Name of the upstream branch on that remote
+	RemoteKeep      string // Non-empty when the upstream branch must never be deleted on the remote, and why
 	Worktree        string // Path of another worktree that has this branch checked out
 	Age             string // Human-readable age of the last commit
 	LastCommitUnix  int64  // Unix timestamp of the last commit (for sorting)
@@ -72,9 +73,11 @@ func (b Branch) FullyMerged() bool { return b.Merged || b.Squashed }
 func (b Branch) AtRisk() bool { return !b.Protected && !b.FullyMerged() && b.Unpushed > 0 }
 
 // RemoteDeletable reports whether the branch has a live upstream on a remote that could be deleted too. A remote
-// that is ahead of the local branch (Behind > 0) holds commits we do not have, so it is never offered.
+// that is ahead of the local branch (Behind > 0) holds commits we do not have, and an upstream that is the default
+// branch, a protected branch or shared with another local branch (RemoteKeep) is not ours to delete, so none of
+// those are ever offered.
 func (b Branch) RemoteDeletable() bool {
-	return b.Remote != "" && b.RemoteBranch != "" && !b.Gone && b.Behind == 0
+	return b.Remote != "" && b.RemoteBranch != "" && !b.Gone && b.Behind == 0 && b.RemoteKeep == ""
 }
 
 // Options controls how branches are classified.
@@ -149,6 +152,29 @@ func Load(repo *git.Repo, opts Options) (Snapshot, error) {
 			}
 		}
 		result[i].Protected = result[i].ProtectedReason != ""
+	}
+
+	// A branch may track a remote branch that is not "its own" (e.g. `git checkout -b feature origin/main`).
+	// Deleting that remote branch would be disastrous, so decide here which upstreams must be left alone.
+	sharedBy := make(map[string]int)
+	for _, b := range result {
+		if b.Remote != "" {
+			sharedBy[b.Remote+"/"+b.RemoteBranch]++
+		}
+	}
+	for i := range result {
+		b := &result[i]
+		switch {
+		case b.Remote == "":
+		case b.RemoteBranch == snap.Default:
+			b.RemoteKeep = "its upstream is the default branch"
+		case ProtectionReason(b.RemoteBranch, "", snap.Default, opts.ProtectPatterns) != "":
+			b.RemoteKeep = "its upstream is a protected branch"
+		case b.RemoteBranch == snap.Current:
+			b.RemoteKeep = "its upstream is the branch you are on"
+		case sharedBy[b.Remote+"/"+b.RemoteBranch] > 1:
+			b.RemoteKeep = "its upstream is shared with another local branch"
+		}
 	}
 
 	// The remaining checks spawn several git processes per branch, so run them in parallel. Protected and merged

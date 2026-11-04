@@ -131,6 +131,8 @@ type Model struct {
 	message    string // Text of the message view
 	messageErr bool   // Whether the message view reports an error
 
+	loaded bool // Branches have been loaded at least once, so a later failed reload can keep the old list
+
 	result Result
 }
 
@@ -249,7 +251,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.op.loading = false
 			m.op.check = msg.check
 			m.op.checkErr = msg.err
-			m.op.ref = msg.ref
+			if msg.ref != "" {
+				m.op.ref = msg.ref
+			}
 		}
 		return m, nil
 
@@ -291,9 +295,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // onBranchesLoaded installs freshly loaded branches, keeping the user's selection, tab and sort order across reloads.
 func (m Model) onBranchesLoaded(msg branchesLoadedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
+		if m.loaded {
+			// A reload failed (e.g. after a merge that did succeed): keep what we have and say so, instead of
+			// quitting and hiding that the operation went through.
+			text := "Could not refresh the branch list: " + git.Reason(msg.err)
+			if m.flash != "" {
+				text = m.flash + ", but the branch list could not be refreshed:\n\n" + git.Reason(msg.err)
+				m.flash = ""
+			}
+			m.showMessage(text, true)
+			return m, nil
+		}
 		m.result.Errors = append(m.result.Errors, fmt.Sprintf("Error fetching branches: %v", msg.err))
 		return m, tea.Quit
 	}
+	m.loaded = true
 
 	previouslySelected := make(map[string]bool)
 	for _, li := range m.list.Items() {

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/vhjan/git-janitor/internal/branches"
+	"github.com/vhjan/git-janitor/internal/config"
 )
 
 // ---- tabs ------------------------------------------------------------------------------------------------------
@@ -500,5 +502,59 @@ func TestMenuWithNothingSelectable(t *testing.T) {
 	}
 	if press(m, "esc").state != stateList {
 		t.Error("esc must still close the menu")
+	}
+}
+
+// ---- review fixes ----------------------------------------------------------------------------------------------
+
+func TestFailedPreflightBlocksRunAndKeepsTheRef(t *testing.T) {
+	m := branchesModel(branches.Branch{Name: "feature"})
+	m = press(m, "u") // update dialog: the ref is only resolved by the pre-flight
+
+	m, _ = feed(m, preflightMsg{id: m.op.id, err: errors.New("boom")}) // fails and carries no ref
+	if m.op.ref != "main" {
+		t.Errorf("ref = %q after a failed pre-flight, want the previous value (main), not an empty ref", m.op.ref)
+	}
+	if !strings.Contains(strings.Join(strings.Fields(m.View()), " "), "Could not inspect") {
+		t.Errorf("the failure should be shown:\n%s", m.View())
+	}
+
+	next, cmd := pressCmd(m, "enter")
+	if next.state != stateOp || cmd != nil {
+		t.Errorf("Run must do nothing when the branches could not be inspected (state=%v, cmd=%v)", next.state, cmd != nil)
+	}
+	if press(m, "esc").state != stateList {
+		t.Error("esc must still close the dialog")
+	}
+}
+
+func TestFailedReloadAfterAnOperationDoesNotQuit(t *testing.T) {
+	m := branchesModel(branches.Branch{Name: "feature"})
+	m.loaded = true
+	m.flash = "Merged feature into cur"
+
+	m, cmd := feed(m, branchesLoadedMsg{err: errors.New("index.lock exists")})
+	if m.state != stateMessage || !m.messageErr {
+		t.Fatalf("state=%v: a failed refresh must be reported, not quit the program", m.state)
+	}
+	for _, c := range runCmd(cmd) {
+		if _, quit := c.(tea.QuitMsg); quit {
+			t.Fatal("the program quit although the operation itself succeeded")
+		}
+	}
+	for _, want := range []string{"Merged feature into cur", "could not be refreshed", "index.lock exists"} {
+		if !strings.Contains(m.message, want) {
+			t.Errorf("message is missing %q: %q", want, m.message)
+		}
+	}
+	if len(m.list.Items()) != 1 {
+		t.Error("the old list should be kept")
+	}
+
+	// Before anything was ever loaded, a failure still ends the program with the error in the summary.
+	fresh := New(config.Default(), nil)
+	fresh, cmd = feed(fresh, branchesLoadedMsg{err: errors.New("not a repo")})
+	if len(fresh.result.Errors) != 1 || cmd == nil {
+		t.Errorf("first-load failure: errors=%v cmd=%v, want an error and a quit", fresh.result.Errors, cmd != nil)
 	}
 }

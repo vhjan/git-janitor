@@ -36,6 +36,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 // ErrNotRepo is returned by Open when the directory is not inside a Git work tree.
@@ -93,6 +94,8 @@ type Repo struct {
 
 	// Observer, when set, is called after every git invocation. It is the hook for a future operation-log panel.
 	Observer func(args []string, err error)
+
+	observerMu sync.Mutex // serialises Observer calls: branches.Load runs git from several goroutines
 }
 
 // Open verifies that git is new enough and that dir (or the current directory when empty) is inside a work tree,
@@ -136,6 +139,8 @@ func (r *Repo) runIO(args ...string) (stdout, stderr string, err error) {
 		err = &Error{Args: args, Stderr: strings.TrimSpace(errBuf.String()), Err: err}
 	}
 	if r.Observer != nil {
+		r.observerMu.Lock()
+		defer r.observerMu.Unlock()
 		r.Observer(args, err)
 	}
 	return outBuf.String(), errBuf.String(), err

@@ -144,8 +144,12 @@ func (r *Repo) CheckMerge(ours, theirs string) (MergeCheck, error) {
 		if len(lines) > 1 {
 			c.Conflicts = lines[1:]
 		}
+	case 129:
+		// Usage error: this git predates `merge-tree --write-tree` (2.38). Conflicts just can't be predicted.
 	default:
-		// Old git without --write-tree, or an unrelated failure: leave Checked false.
+		// Anything else is a real failure (unrelated histories, a missing object, ...): report it rather than
+		// blaming the git version.
+		return c, err
 	}
 	return c, nil
 }
@@ -205,8 +209,8 @@ func (r *Repo) abortOnConflict(op string, squash bool, err error) error {
 	if abortErr != nil {
 		// e.g. an index.lock held by an IDE: the repository is still mid-operation, so say so instead of
 		// claiming that nothing changed.
-		return fmt.Errorf("%s hit conflicts in %s, and aborting it failed (%s); run `git %s --abort` yourself",
-			op, strings.Join(files, ", "), Reason(abortErr), map[bool]string{true: "rebase", false: "merge"}[op == "rebase"])
+		return fmt.Errorf("%s hit conflicts in %s, and aborting it failed (%s); run `%s` yourself",
+			op, strings.Join(files, ", "), Reason(abortErr), abortHint(op, squash))
 	}
 	return &ConflictError{Op: op, Files: files}
 }
@@ -236,4 +240,16 @@ func (r *Repo) rebaseInProgress() bool {
 		}
 	}
 	return false
+}
+
+// abortHint is the command a user should run to roll back an operation that we failed to abort ourselves.
+func abortHint(op string, squash bool) string {
+	switch {
+	case op == "rebase":
+		return "git rebase --abort"
+	case squash:
+		return "git reset --merge" // a squash merge leaves no MERGE_HEAD, so --abort does not apply
+	default:
+		return "git merge --abort"
+	}
 }
