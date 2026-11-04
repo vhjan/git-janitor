@@ -10,7 +10,7 @@ internal/
   config/                   Config struct shared by everything (flags today, config file later)
   theme/                    colours, layout constants, list symbols, shared lipgloss styles
   git/                      the ONLY package that spawns git
-  branches/                 UI-independent domain logic: classify, protect, delete
+  branches/                 UI-independent domain logic: classify, protect, delete, merge/rebase policy
   updater/                  GitHub release check + package-manager detection
   tui/                      Bubble Tea front end
   cli/                      flag parsing, command registry, help/version/update
@@ -36,8 +36,8 @@ Rules of thumb:
 
 | I want to add...                                    | Touch                                                                                          |
 |-----------------------------------------------------|------------------------------------------------------------------------------------------------|
-| A new git operation (merge, rebase, push, create)   | A method on `git.Repo` (`internal/git`), plus a function in `branches` if it has logic around it |
-| A new branch status tag (squash-merged, unpushed)   | A field on `branches.Branch`, set in `branches.Load`; show it in `tui/item.go`                  |
+| A new git operation (push, checkout, create, ...)   | A method on `git.Repo` (`internal/git`), plus a function in `branches` if it has logic around it |
+| A new branch status tag (e.g. PR state)             | A field on `branches.Branch`, set in `branches.Load`; show it in `tui/item.go`                  |
 | A new key in the list                               | A binding in `tui/keys.go`, a case in `handleListKey` (`tui/view_list.go`). Footer and `--help` update automatically |
 | A new screen (prompt, details pane, command palette)| A `state` constant and `view_<name>.go` in `internal/tui`; add cases to `Update`/`View` in `model.go` |
 | A new CLI subcommand (`new`, `co`, `clean`)         | A `Command` in `internal/cli`, registered in `init()` in `cli.go`. It shows up in `--help` automatically |
@@ -47,11 +47,30 @@ Rules of thumb:
 
 ## The TUI in a nutshell
 
-`tui.Model` holds shared state and a `state` enum (`stateLoading`, `stateList`, `stateConfirm`). `Update` first handles
-messages that don't depend on the view (window size, data loaded) and then forwards everything else to
-`updateLoading` / `updateList` / `updateConfirm`. `View` does the same for rendering. Slow work is always a `tea.Cmd`
-in `tui/messages.go` that returns a message.
+`tui.Model` holds shared state and a `state` enum: `stateLoading` (spinner, text in `Model.busy`), `stateList`,
+`stateConfirm` (delete dialog), `stateOp` (merge/rebase/update dialog) and `stateMessage` (notice or error). `Update`
+first handles messages that don't depend on the view (window size, branches loaded, delete/operation finished) and then
+forwards everything else to `updateLoading` / `updateList` / `updateConfirm` / `updateOp` / `updateMessage`. `View` does
+the same for rendering. Slow work is always a `tea.Cmd` in `tui/messages.go` that returns a message; call
+`Model.startBusy` (in its own statement, it mutates the model) to show the spinner while it runs.
 
+## Safety model
+
+These rules are what make the destructive features safe to extend; keep them when adding more.
+
+- **Nothing deletes what git can't get back, silently.** `branches.Load` computes `Unpushed` (commits reachable from the
+  branch but from neither the default branch nor any remote) and `Squashed` (changes already in the default branch via
+  squash/rebase merge, detected with `git cherry` patch ids). `Branch.AtRisk()` is true for unmerged branches with
+  unpushed commits; the delete dialog then lists them and only accepts a capital `Y`. Every deleted branch's SHA is
+  printed afterwards so it can be restored.
+- **Failed merges/rebases roll themselves back.** `git.Repo.Merge/Rebase` abort when they stop on conflicts and return a
+  `*git.ConflictError`; the TUI shows it in the message view. `git.Repo.CheckMerge` predicts conflicts read-only with
+  `git merge-tree --write-tree` (git 2.38+; on older git the dialog says conflicts can't be predicted and relies on the
+  automatic abort).
+- **git never blocks the UI.** Every invocation runs with `GIT_TERMINAL_PROMPT=0` and `GIT_EDITOR=true`, so a missing
+  credential or an editor request fails fast instead of hanging behind the alternate screen.
+- **Merge/rebase act on the current branch only.** They never check out another branch behind the user's back, require a
+  clean tracked working tree, and honour `--dry-run` by only reporting the command.
 ## Binaries and aliases
 
 GoReleaser builds the same `main` twice: `git-janitor` and the short alias `gj`. Both ship in the archives, the Scoop

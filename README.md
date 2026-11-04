@@ -49,12 +49,29 @@ Here is why it is a better approach:
 
 * **Keyboard-driven UI:** Navigate and toggle branches quickly without leaving the terminal.
 * **Merged Branch Detection:** Automatically flags branches that have already been safely merged into your default
-  branch.
-* **Bulk Selection:** Select all unprotected branches or exclusively merged branches with a single keystroke.
-* **Branch Protection:** Built-in safeguards prevent the accidental deletion of your currently active branch, as well as
-  standard branches like `main`, `master`, and `dev`.
+  branch, **including squash merges and rebase/cherry-pick merges** that `git branch --merged` cannot see (the usual
+  result of a GitHub "Squash and merge").
+  "Merged" always means merged into your **local** default branch, so you stay in control of when it is updated. If
+  that branch is behind its remote, a notice under the list says by how much, because merges done on the remote (such
+  as squash-merged pull requests) will not show as merged until you update it.
+* **Bulk Selection:** Select all unprotected branches, or exclusively merged, gone or stale ones, with a single
+  keystroke.
+* **Branch Protection:** Built-in safeguards prevent the accidental deletion of your currently active branch, the
+  default branch, `dev`, anything matching `--protect`, and any branch checked out in another worktree.
+* **Data-loss Guard:** Every row shows how it relates to its upstream (`↑2 ↓1`, *Local only*) and warns when deleting it
+  would lose commits that exist nowhere else. Deleting such branches requires typing a capital `Y`.
+* **Remote Cleanup:** Optionally delete the matching remote branches in the same step, and fetch + prune stale
+  remote-tracking branches on demand.
+* **Recoverable:** The summary prints the commit id of every deleted branch, so `git branch <name> <sha>` brings it back.
+* **Merge & Rebase:** Merge the highlighted branch into your current branch (fast-forward, `--no-ff` or squash), rebase
+  onto it, or update from the default branch. Conflicts are predicted before anything runs (`git merge-tree`, git
+  2.38+), and an operation that hits conflicts is aborted automatically, so your repository is never left half-merged.
 
 ## Installation
+
+> **Requirements:** git **2.23 or newer** must be installed and on your `PATH` (older versions are rejected with a
+> clear message). Predicting merge/rebase conflicts additionally needs git 2.38+; without it the dialog says
+> conflicts can't be predicted, and conflicting operations are still aborted automatically.
 
 **Option 1: Package Managers (Recommended)**
 
@@ -140,13 +157,22 @@ Set-Alias gj git-janitor
 | `↓` / `j`      | Move cursor down                                             |
 | `Space`        | Toggle selection for the current branch                      |
 | `a`            | Select **all** unprotected branches                          |
-| `m`            | Select only **merged** branches                              |
+| `m`            | Select only **merged** branches (incl. squash/rebase merges) |
 | `g`            | Select only **gone** branches (upstream deleted on remote)   |
 | `s`            | Select only **stale** branches (see `--stale-days`)          |
 | `c`            | **Clear** all selections                                     |
 | `o`            | Cycle the sort order                                         |
+| `f`            | **Fetch** and prune stale remote-tracking branches           |
+| `M`            | **Merge** the highlighted branch into the current branch     |
+| `R`            | **Rebase** the current branch onto the highlighted branch    |
+| `U`            | **Update** the current branch from the default branch        |
 | `Enter`        | Proceed to deletion confirmation                             |
 | `q` / `Ctrl+C` | Quit                                                         |
+
+In the **delete confirmation**, `r` toggles *also delete the remote branches*, `y` confirms (a capital `Y` when commits
+would be lost) and `n` / `Esc` cancels. In the **merge / rebase dialog**, `↑`/`↓` or `1`-`4` pick an option, `Enter`
+runs it and `Esc` cancels. Merge, rebase and update act on the branch you are currently on and need a clean working
+tree (untracked files are fine). With `--dry-run` they only show the git command they would run.
 
 ## Configuration
 
